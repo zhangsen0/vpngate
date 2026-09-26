@@ -23,8 +23,29 @@ export const DEFAULT_SOURCES = [
   {
     id: 'auto-ovpn-mirror',
     name: 'auto-ovpn GitHub 镜像(JSON)',
-    url: 'https://raw.githubusercontent.com/9xN/auto-ovpn/master/json/data.json',
+    url: 'https://raw.githubusercontent.com/9xN/auto-ovpn/main/json/data.json',
     type: 'json',
+    enabled: true,
+  },
+  {
+    id: 'vpngate-csv-mirror-1',
+    name: 'GitHub CSV 镜像① (Vepashka94)',
+    url: 'https://raw.githubusercontent.com/Vepashka94/vpngate-mirror/main/vpngate.csv',
+    type: 'csv',
+    enabled: true,
+  },
+  {
+    id: 'vpngate-csv-mirror-2',
+    name: 'GitHub CSV 镜像② (NetLops)',
+    url: 'https://raw.githubusercontent.com/NetLops/vpngate-mirror/main/vpngate.csv',
+    type: 'csv',
+    enabled: true,
+  },
+  {
+    id: 'vpngate-csv-mirror-3',
+    name: 'GitHub CSV 镜像③ (ezedin63)',
+    url: 'https://raw.githubusercontent.com/ezedin63/vpngate-mirror/main/data/vpngate.csv',
+    type: 'csv',
     enabled: true,
   },
 ];
@@ -33,8 +54,8 @@ export const DEFAULTS = {
   version: 1,
   dataSources: DEFAULT_SOURCES,
   fetch: {
-    /** 单数据源拉取超时(ms) */
-    timeoutMs: 15000,
+    /** 单数据源拉取超时(ms)（镜像源实测 <1s；官方不可达时快速交给镜像接管） */
+    timeoutMs: 8000,
     /** 解析后最多保留的服务器数（防过载） */
     maxServers: 400,
     /** 服务器列表缓存时长(秒) */
