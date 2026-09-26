@@ -15,8 +15,8 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const path = url.pathname;
 
-  // 登录相关路径始终放行
-  if (path === '/login.html' || path.startsWith('/api/auth/')) {
+  // 登录相关路径与无鉴权探活接口始终放行
+  if (path === '/login.html' || path.startsWith('/api/auth/') || path === '/api/healthz') {
     return next();
   }
 

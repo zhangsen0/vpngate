@@ -105,6 +105,11 @@ async function init() {
     applyTheme(state.config.ui.theme);
     fillSortOptions();
     await loadServers();
+    // 版本号（用于页脚展示，非关键失败不影响使用）
+    try {
+      const h = await api('/api/health');
+      state.version = h.version;
+    } catch { /* 忽略 */ }
   } catch (e) {
     setStatus(`初始化失败：${e.message}`, 'err');
   }
@@ -171,7 +176,9 @@ function renderMeta() {
   const srcs = (state.statuses || [])
     .map((s) => `${s.name}${s.ok ? '' : '(失败)'}`)
     .join(' / ') || '无';
-  el.textContent = `数据源：${srcs} · 更新 ${t} · 存储 ${state.storage}`;
+  const st = state.storage;
+  const storageTxt = st ? `存储 ${st.effective === 'kv' ? 'KV' : '内存'}${st.degraded ? '(降级)' : ''}` : '';
+  el.textContent = `数据源：${srcs} · 更新 ${t}${storageTxt ? ' · ' + storageTxt : ''}`;
 }
 
 function renderTable() {
@@ -212,7 +219,7 @@ function renderTable() {
 
 function renderFoot() {
   document.getElementById('footText').textContent =
-    `v1.1 · CF 探测延迟为边缘测量值 · 本机校验确认本机网络可达性 · 共 ${state.servers.length} 个节点`;
+    `v${state.version || '1'} · CF 探测延迟为边缘测量值 · 本机校验确认本机网络可达性 · 共 ${state.servers.length} 个节点`;
 }
 
 function fillCountrySelect() {
@@ -457,11 +464,36 @@ function renderConfigForm() {
     (groups[item.group] = groups[item.group] || []).push(item);
   }
   const body = document.getElementById('cfgBody');
-  body.innerHTML = Object.keys(groups).map((g) => `
+  body.innerHTML = `
+    <div class="cfg-group">
+      <h4>配置存储</h4>
+      <div class="cfg-row">
+        <label>存储模式</label>
+        <div>
+          <div class="storage-mode" data-storage-mode>
+            <label><input type="radio" name="storageMode" value="auto" ${state.storage.mode === 'auto' ? 'checked' : ''} /> 自动（KV 优先，故障降级内存）</label>
+            <label><input type="radio" name="storageMode" value="memory" ${state.storage.mode === 'memory' ? 'checked' : ''} /> 仅内存（不读写 KV）</label>
+            <label><input type="radio" name="storageMode" value="kv" ${state.storage.mode === 'kv' ? 'checked' : ''} /> 仅 KV（KV 故障时降级内存并告警）</label>
+          </div>
+          <div class="cfg-hint">当前生效：<b>${state.storage.effective === 'kv' ? 'KV' : '内存'}</b>
+            ${state.storage.degraded ? '<span class="chip bad">已自动降级（KV 不可用）</span>' : ''}
+            ${state.storage.effective === 'memory' && state.storage.kvAvailable && state.storage.mode !== 'memory' ? ' · <span class="chip ok">KV 已恢复，可手动同步</span>' : ''}</div>
+        </div>
+      </div>
+      <div class="cfg-row" style="border:none;padding-bottom:0">
+        <label></label>
+        <div class="row-actions" style="margin:0">
+          <button class="btn btn-sm" id="btnApplyStorage">应用存储模式</button>
+          <button class="btn btn-sm" id="btnSyncKv" ${state.storage.effective === 'kv' ? 'disabled' : ''}
+            title="${state.storage.effective === 'kv' ? '当前即 KV 存储，无需同步' : 'KV 恢复后把内存配置手动写入 KV'}">同步内存到 KV</button>
+        </div>
+      </div>
+    </div>
+    ${Object.keys(groups).map((g) => `
     <div class="cfg-group">
       <h4>${esc(g)}</h4>
       ${groups[g].map((it) => cfgRowHtml(it)).join('')}
-    </div>`).join('');
+    </div>`).join('')}`;
   // 绑定输入变更 → 写入本地 state.config
   body.querySelectorAll('[data-path]').forEach((el) => {
     el.addEventListener('input', () => {
@@ -471,6 +503,34 @@ function renderConfigForm() {
       const v = cfgReadValue(el, item);
       setPath(state.config, path, v);
     });
+  });
+  // 存储模式操作
+  document.getElementById('btnApplyStorage').addEventListener('click', async () => {
+    const mode = document.querySelector('input[name="storageMode"]:checked').value;
+    try {
+      const data = await api('/api/config/storage', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      });
+      state.storage = data.storage;
+      renderConfigForm();
+      renderMeta();
+      toast(data.error ? `已切换（${data.error}）` : `已切换为「${mode}」模式`, data.error ? 'err' : 'ok');
+    } catch (e) {
+      toast(`切换失败：${e.message}`, 'err');
+    }
+  });
+  document.getElementById('btnSyncKv').addEventListener('click', async () => {
+    try {
+      const data = await api('/api/config/storage/sync', { method: 'POST' });
+      state.storage = data.storage;
+      renderConfigForm();
+      renderMeta();
+      toast('内存配置已同步到 KV', 'ok');
+    } catch (e) {
+      toast(`同步失败：${e.message}`, 'err');
+    }
   });
 }
 
@@ -961,6 +1021,11 @@ function bindEvents() {
   document.getElementById('btnConfig').addEventListener('click', () => {
     renderConfigForm();
     document.getElementById('cfgMask').hidden = false;
+  });
+  document.getElementById('btnLogs').addEventListener('click', openLogs);
+  document.getElementById('btnLogRefresh').addEventListener('click', openLogs);
+  document.getElementById('btnCloseLog').addEventListener('click', () => {
+    document.getElementById('logMask').hidden = true;
   });
 
   document.getElementById('searchInput').addEventListener('input', (e) => {

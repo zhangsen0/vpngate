@@ -28,6 +28,11 @@ jobs:
       - name: 安装 zip
         run: sudo apt-get update && sudo apt-get install -y zip
 
+      - name: 代码检查（语法 + 单元测试）
+        run: |
+          node scripts/check-syntax.mjs
+          node scripts/check-unit.mjs
+
       - name: 组装部署包
         run: |
           node scripts/package.mjs dist

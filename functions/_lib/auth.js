@@ -98,6 +98,49 @@ export function safeEqual(a, b) {
   return diff === 0;
 }
 
+// ==================== 登录防爆破（内存级，尽力而为） ====================
+// 默认：同一 IP 连续 5 次失败锁定 10 分钟；可用环境变量 LOGIN_MAX_FAIL / LOGIN_LOCK_MIN 调整。
+
+const failMap = new Map(); // ip → { count, resetAt }
+
+/**
+ * 检查登录锁定状态。
+ * @param {object} env - 环境对象
+ * @param {string} ip - 客户端 IP
+ * @returns {{locked: boolean, retryAfter?: number}}
+ */
+export function checkLoginLock(env, ip) {
+  const maxFail = Number.parseInt(env && env.LOGIN_MAX_FAIL, 10) || 5;
+  const rec = failMap.get(ip);
+  if (!rec) return { locked: false };
+  if (Date.now() > rec.resetAt) {
+    failMap.delete(ip);
+    return { locked: false };
+  }
+  if (rec.count >= maxFail) {
+    return { locked: true, retryAfter: Math.max(1, Math.ceil((rec.resetAt - Date.now()) / 1000)) };
+  }
+  return { locked: false };
+}
+
+/** 记录一次登录失败 */
+export function recordLoginFail(env, ip) {
+  const maxFail = Number.parseInt(env && env.LOGIN_MAX_FAIL, 10) || 5;
+  const lockMs = (Number.parseInt(env && env.LOGIN_LOCK_MIN, 10) || 10) * 60 * 1000;
+  const now = Date.now();
+  const rec = failMap.get(ip);
+  if (!rec || now > rec.resetAt) {
+    failMap.set(ip, { count: 1, resetAt: now + lockMs });
+    return;
+  }
+  rec.count = Math.min(rec.count + 1, maxFail + 99);
+}
+
+/** 登录成功后清除锁定 */
+export function clearLoginLock(ip) {
+  failMap.delete(ip);
+}
+
 function b64urlEncode(str) {
   return btoa(unescape(encodeURIComponent(str)))
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');

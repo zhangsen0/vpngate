@@ -1,5 +1,15 @@
-# 静态资源安全响应头（Cloudflare Pages 自动应用）
+# 安全响应头（全局）
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY
+
+# 静态资源长缓存（更新时通过 index.html 的 ?v=N 版本参数刷新）
+/app.js
+/style.css
+  Cache-Control: public, max-age=604800, immutable
+
+# HTML 不缓存（保证登录态与最新页面即时生效）
+/index.html
+/login.html
+  Cache-Control: no-cache

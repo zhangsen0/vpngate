@@ -6,7 +6,7 @@
   <meta name="description" content="VPNGate 节点优选：拉取实时节点，可配置权重与探测参数，一键优选并生成可用 OpenVPN 节点配置" />
   <title>VPNGate 优选</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233b82f6'/%3E%3Cpath d='M34 12 18 36h12l-4 16 18-26H30z' fill='white'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/style.css?v=3" />
 </head>
 <body data-theme="dark">
   <header class="topbar">
@@ -26,6 +26,10 @@
       <button class="btn" id="btnRefresh" title="强制从数据源重新拉取列表">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
         刷新
+      </button>
+      <button class="btn" id="btnLogs" title="查看操作日志">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        日志
       </button>
       <button class="btn btn-primary" id="btnOptimize">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4.5 13.5H11L9.5 22 19 10h-6.5z"/></svg>
@@ -146,6 +150,20 @@
     </div>
   </div>
 
+  <!-- 操作日志 -->
+  <div class="modal-mask" id="logMask" hidden>
+    <div class="modal modal-wide">
+      <div class="modal-head">
+        <span>📋 操作日志</span>
+        <div class="modal-actions">
+          <button class="btn" id="btnLogRefresh">刷新</button>
+          <button class="btn-close" id="btnCloseLog" title="关闭">×</button>
+        </div>
+      </div>
+      <div class="modal-body" id="logBody"></div>
+    </div>
+  </div>
+
   <footer class="foot">
     <span id="footText"></span>
     <span aria-hidden="true">·</span>
@@ -155,6 +173,6 @@
   </footer>
 
   <div class="toast" id="toast" hidden></div>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=3"></script>
 </body>
 </html>

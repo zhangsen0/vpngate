@@ -91,6 +91,8 @@ export const DEFAULTS = {
   optimize: {
     /** 优选返回的节点条数 */
     topN: 8,
+    /** 优选结果缓存时长(秒)：相同参数下避免重复探测；0 关闭缓存 */
+    cacheSeconds: 30,
   },
   ovpn: {
     /** 生成的 .ovpn 中是否把 remote 主机名改写为 IP（直连优选 IP） */
@@ -166,6 +168,8 @@ export const SCHEMA = [
 
   // —— 优选结果 ——
   { key: 'optimize.topN', group: '优选结果', label: '优选返回条数', type: 'int', min: 1, max: 50 },
+  { key: 'optimize.cacheSeconds', group: '优选结果', label: '优选缓存时长(秒)', type: 'int', min: 0, max: 3600, unit: 's',
+    hint: '相同参数下缓存优选结果，避免重复探测；0 关闭' },
 
   // —— 节点配置生成 ——
   { key: 'ovpn.rewriteRemoteToIp', group: '节点配置生成', label: 'remote 改写为优选 IP', type: 'boolean' },
@@ -252,6 +256,7 @@ export function validateConfig(cfg) {
   config.probe.reachableBoost = clamp(numOf(withDefault('probe.reachableBoost', 0.2), 0.2), 0, 1);
 
   config.optimize.topN = clamp(intOf(withDefault('optimize.topN', 8), 8), 1, 50);
+  config.optimize.cacheSeconds = clamp(intOf(withDefault('optimize.cacheSeconds', 30), 30), 0, 3600);
 
   config.ovpn.rewriteRemoteToIp = boolOf(withDefault('ovpn.rewriteRemoteToIp', true), true);
   config.ovpn.appendOptions = strArrayOf(withDefault('ovpn.appendOptions', []));
@@ -317,70 +322,260 @@ function intArrayOf(v) {
   return [];
 }
 
-// ==================== 存取（KV 优先，内存兜底） ====================
+// ==================== 存储（KV / 内存双模式） ====================
 
 const KV_KEY = 'global';
+const META_KEY = 'meta';
+/** 配置内存缓存 TTL（毫秒）：显著降低 KV 读频率；可用环境变量 CONFIG_CACHE_SECONDS 调整 */
+const CONFIG_CACHE_TTL_DEFAULT = 60;
 
 /** 隔离岛级内存兜底（无 KV 绑定时使用） */
 const memStore = new Map();
 
+/** 配置内存缓存（KV 读取结果复用） */
+const cfgCache = { config: null, ts: 0 };
+
 /**
- * 读取当前生效配置。
- * @param {object} env - Pages Functions 环境对象
- * @returns {Promise<{config: object, storage: string}>} storage: 'kv' | 'memory'
+ * 存储模式状态（隔离岛级）：
+ *  - mode：用户指定 auto / memory / kv（默认 auto，可用环境变量 STORAGE_MODE 指定）
+ *  - effective：实际生效存储（KV 故障时自动降级 memory）
+ *  - degraded：是否因 KV 故障自动降级
  */
-export async function loadConfig(env) {
+const storageState = {
+  mode: 'auto',
+  effective: 'memory',
+  degraded: false,
+  kvAvailable: true,
+};
+let metaLoaded = false;
+
+function validMode(m) {
+  return m === 'auto' || m === 'memory' || m === 'kv' ? m : null;
+}
+
+/** 当前存储状态快照 */
+function snapshot() {
+  return {
+    mode: storageState.mode,
+    effective: storageState.effective,
+    degraded: storageState.degraded,
+    kvAvailable: storageState.kvAvailable,
+  };
+}
+
+/** 惰性恢复存储模式（每隔离岛一次）：KV meta 持久化 > 环境变量 > auto */
+async function resolveMode(env) {
+  if (metaLoaded) return;
+  let mode = (env && env.STORAGE_MODE) || '';
+  if (!validMode(mode)) mode = '';
   const kv = env && env.VPNGATE_CFG;
-  if (kv) {
+  if (kv && !mode) {
     try {
-      const raw = await kv.get(KV_KEY);
-      if (raw) return { config: validateConfig(JSON.parse(raw)).config, storage: 'kv' };
+      const raw = await kv.get(META_KEY);
+      if (raw) {
+        const m = validMode(JSON.parse(raw).mode);
+        if (m) mode = m;
+      }
     } catch {
-      /* KV 读取失败则回退内存 */
+      /* KV 不可用则用环境/默认 */
     }
   }
-  const cached = memStore.get(KV_KEY);
-  if (cached) return { config: cached, storage: 'memory' };
-  const { config } = validateConfig(null);
-  return { config, storage: 'memory' };
+  storageState.mode = validMode(mode) || 'auto';
+  metaLoaded = true;
+}
+
+/** 从 KV 读取配置（不抛异常） */
+async function loadFromKv(env) {
+  const kv = env && env.VPNGATE_CFG;
+  if (!kv) return { config: null, ok: false, reason: '未绑定 KV' };
+  try {
+    const raw = await kv.get(KV_KEY);
+    if (!raw) return { config: null, ok: true };
+    return { config: validateConfig(JSON.parse(raw)).config, ok: true };
+  } catch (e) {
+    return { config: null, ok: false, reason: e.message };
+  }
+}
+
+/** 写入 KV（不抛异常） */
+async function writeToKv(env, config) {
+  const kv = env && env.VPNGATE_CFG;
+  if (!kv) return { ok: false, reason: '未绑定 KV' };
+  try {
+    await kv.put(KV_KEY, JSON.stringify(config));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+}
+
+/** 读取内存配置（无则默认值） */
+function readMemory() {
+  return memStore.get(KV_KEY) || validateConfig(null).config;
+}
+
+/** 写入内存（同时刷新缓存） */
+function writeMemory(config) {
+  memStore.set(KV_KEY, config);
+  cfgCache.config = config;
+  cfgCache.ts = Date.now();
 }
 
 /**
- * 保存配置（部分更新）。
+ * 读取当前生效配置（优先内存缓存，TTL 内不读 KV）。
+ * 存储模式为 auto/kv 时尝试 KV：成功 → effective=kv；失败 → 自动降级 memory（degraded=true）。
+ * 存储模式为 memory 时仅用内存，不访问 KV。
+ * @param {object} env - Pages Functions 环境对象
+ * @returns {Promise<{config: object, storage: object}>}
+ */
+export async function loadConfig(env) {
+  await resolveMode(env);
+  const ttlSec = Number.parseInt(env && env.CONFIG_CACHE_SECONDS, 10);
+  const ttlMs = (Number.isNaN(ttlSec) ? CONFIG_CACHE_TTL_DEFAULT : Math.max(0, ttlSec)) * 1000;
+  if (cfgCache.config && Date.now() - cfgCache.ts < ttlMs) {
+    return { config: cfgCache.config, storage: snapshot() };
+  }
+
+  let config;
+  if (storageState.mode !== 'memory') {
+    const r = await loadFromKv(env);
+    if (r.ok) {
+      if (r.config) {
+        config = r.config;
+        storageState.effective = 'kv';
+        storageState.degraded = false;
+        storageState.kvAvailable = true;
+      } else {
+        config = readMemory();
+        storageState.effective = 'memory';
+        storageState.kvAvailable = true;
+      }
+    } else {
+      storageState.effective = 'memory';
+      storageState.degraded = true;
+      storageState.kvAvailable = false;
+      config = readMemory();
+    }
+  } else {
+    storageState.effective = 'memory';
+    config = readMemory();
+  }
+
+  cfgCache.config = config;
+  cfgCache.ts = Date.now();
+  return { config, storage: snapshot() };
+}
+
+/**
+ * 保存配置（部分更新）。写内存（兜底）+ 按模式写 KV（低频必要写）。
  * @param {object} env - Pages Functions 环境对象
  * @param {object} partial - 用户提交的配置片段
- * @returns {Promise<{config: object, errors: string[], storage: string}>}
+ * @returns {Promise<{config: object, errors: string[], storage: object}>}
  */
 export async function saveConfig(env, partial) {
-  const { config: current } = await loadConfig(env);
+  await resolveMode(env);
   const merged = mergeConfig(partial); // 以默认值为底再合入用户片段，避免用户省略字段导致丢失
   const { config, errors } = validateConfig(merged);
+  writeMemory(config);
 
-  const kv = env && env.VPNGATE_CFG;
-  if (kv) {
-    try {
-      await kv.put(KV_KEY, JSON.stringify(config));
-      return { config, errors, storage: 'kv' };
-    } catch (e) {
-      errors.push(`KV 写入失败，已仅保存在内存：${e.message}`);
+  if (storageState.mode !== 'memory') {
+    const w = await writeToKv(env, config);
+    if (w.ok) {
+      storageState.effective = 'kv';
+      storageState.degraded = false;
+      storageState.kvAvailable = true;
+    } else {
+      storageState.effective = 'memory';
+      storageState.degraded = true;
+      storageState.kvAvailable = false;
+      errors.push(`KV 写入失败，已自动降级为内存存储（可稍后手动同步到 KV）：${w.reason}`);
     }
+  } else {
+    storageState.effective = 'memory';
   }
-  memStore.set(KV_KEY, config);
-  return { config, errors, storage: 'memory' };
+  return { config, errors, storage: snapshot() };
 }
 
 /** 恢复默认配置 */
 export async function resetConfig(env) {
+  await resolveMode(env);
   const { config } = validateConfig(null);
+  writeMemory(config);
+
+  if (storageState.mode !== 'memory') {
+    const w = await writeToKv(env, config);
+    if (w.ok) {
+      storageState.effective = 'kv';
+      storageState.degraded = false;
+      storageState.kvAvailable = true;
+    } else {
+      storageState.effective = 'memory';
+      storageState.degraded = true;
+      storageState.kvAvailable = false;
+    }
+  } else {
+    storageState.effective = 'memory';
+  }
+  return { config, storage: snapshot() };
+}
+
+/**
+ * 手动切换存储模式：auto / memory / kv。
+ * 切换为非 memory 时立即把当前内存配置同步到 KV（若 KV 可用）。
+ * @param {object} env - Pages Functions 环境对象
+ * @param {string} mode - auto | memory | kv
+ * @returns {Promise<{ok: boolean, error?: string, storage: object}>}
+ */
+export async function setStorageMode(env, mode) {
+  await resolveMode(env);
+  const m = validMode(mode);
+  if (!m) return { ok: false, error: 'mode 必须为 auto / memory / kv', storage: snapshot() };
+
+  storageState.mode = m;
   const kv = env && env.VPNGATE_CFG;
   if (kv) {
     try {
-      await kv.put(KV_KEY, JSON.stringify(config));
-      return { config, storage: 'kv' };
+      await kv.put(META_KEY, JSON.stringify({ mode: m }));
     } catch {
-      /* 忽略 */
+      /* KV 不可用：模式仅保存在内存，随 KV 恢复后可重新设置 */
     }
   }
-  memStore.set(KV_KEY, config);
-  return { config, storage: 'memory' };
+  if (m !== 'memory') {
+    const r = await syncToKv(env);
+    if (!r.ok) return { ok: true, error: r.error, storage: snapshot() };
+  } else {
+    storageState.effective = 'memory';
+  }
+  return { ok: true, storage: snapshot() };
+}
+
+/**
+ * 手动把内存配置同步写入 KV（KV 恢复后使用），成功后解除降级标记。
+ * @param {object} env - Pages Functions 环境对象
+ * @returns {Promise<{ok: boolean, error?: string, storage: object}>}
+ */
+export async function syncToKv(env) {
+  await resolveMode(env);
+  const config = readMemory();
+  const w = await writeToKv(env, config);
+  if (w.ok) {
+    storageState.effective = 'kv';
+    storageState.degraded = false;
+    storageState.kvAvailable = true;
+    const kv = env && env.VPNGATE_CFG;
+    if (kv) {
+      try {
+        await kv.put(META_KEY, JSON.stringify({ mode: storageState.mode }));
+      } catch {
+        /* 忽略 */
+      }
+    }
+    return { ok: true, storage: snapshot() };
+  }
+  return { ok: false, error: `KV 不可用：${w.reason}`, storage: snapshot() };
+}
+
+/** 读取当前存储状态（供页面展示） */
+export function getStorageState() {
+  return snapshot();
 }

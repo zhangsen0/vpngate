@@ -2,24 +2,32 @@
  * API 路由入口 — functions/api/[[path]].js
  *
  * 路由表：
- *  GET  /api/health            健康检查（版本、存储方式）
- *  GET  /api/config            读取生效配置 + 声明式 SCHEMA（供前端渲染配置面板）
- *  PUT  /api/config            保存配置（部分更新，服务端校验）
- *  POST /api/config/reset      恢复默认配置
- *  GET  /api/servers?refresh=1 服务器列表（默认走缓存；refresh=1 强制刷新）
- *  POST /api/optimize          执行优选（可选请求体覆盖部分参数，如 country/topN）
- *  GET  /api/ovpn?id=...       生成并返回 .ovpn 配置文本
- *  GET  /api/node?id=...       返回节点参数摘要
- *  POST /api/probe             对指定 IP 做连通性探测 { ip, ports? }
+ *  GET  /api/health             健康检查（版本、存储方式）
+ *  GET  /api/healthz            无鉴权探活（仅 ok/版本/时间，供外部监控）
+ *  GET  /api/config             读取生效配置 + 声明式 SCHEMA + 存储状态
+ *  PUT  /api/config             保存配置（部分更新，服务端校验）
+ *  POST /api/config/reset       恢复默认配置
+ *  PUT  /api/config/storage     切换存储模式（auto / memory / kv）
+ *  POST /api/config/storage/sync  手动把内存配置同步写入 KV
+ *  GET  /api/servers?refresh=1  服务器列表（默认走缓存；refresh=1 强制刷新）
+ *  POST /api/optimize           执行优选（可覆盖 country/topN/requireReachable，结果短时缓存）
+ *  GET  /api/ovpn?id=...        生成并返回 .ovpn 配置文本
+ *  GET  /api/node?id=...        返回节点参数摘要
+ *  POST /api/probe              对指定 IP 做连通性探测 { ip, ports? }
+ *  GET  /api/logs?limit=50      读取操作日志（需登录）
  */
 
-import { json, readJson, queryParams } from '../_lib/util.js';
-import { loadConfig, saveConfig, resetConfig, DEFAULTS, SCHEMA } from '../_lib/config.js';
+import { json, readJson, queryParams, sha1Hex } from '../_lib/util.js';
+import { loadConfig, saveConfig, resetConfig, setStorageMode, syncToKv, DEFAULTS, SCHEMA } from '../_lib/config.js';
 import { getServers } from '../_lib/sources.js';
 import { runOptimize } from '../_lib/optimize.js';
 import { buildOvpn, nodeParams } from '../_lib/ovpn.js';
 import { probeServer } from '../_lib/probe.js';
-import { issueToken, authCookieHeaders, clearCookieHeaders, safeEqual, isAuthed } from '../_lib/auth.js';
+import {
+  issueToken, authCookieHeaders, clearCookieHeaders, safeEqual, isAuthed,
+  checkLoginLock, recordLoginFail, clearLoginLock,
+} from '../_lib/auth.js';
+import { log, readLogs, flushPendingLogs } from '../_lib/log.js';
 
 export async function onRequest(context) {
   const { request, env, params } = context;
@@ -37,13 +45,23 @@ export async function onRequest(context) {
   }
 
   try {
-    return await route(method, path, request, env);
+    const res = await route(method, path, request, env);
+    // 请求结束时批量落盘操作日志（一次请求至多一次 KV 写）
+    if (typeof context.waitUntil === 'function') {
+      context.waitUntil(flushPendingLogs(env));
+    }
+    return res;
   } catch (e) {
+    if (typeof context.waitUntil === 'function') {
+      context.waitUntil(flushPendingLogs(env));
+    }
     return json({ ok: false, error: e.message || '内部错误' }, 500);
   }
 }
 
 async function route(method, path, request, env) {
+  const clientIp = request.headers.get('cf-connecting-ip') || 'unknown';
+
   // —— 登录 / 登出 / 会话状态 ——
   if (method === 'POST' && path === 'auth/login') {
     const body = await readJson(request);
@@ -52,15 +70,24 @@ async function route(method, path, request, env) {
     if (!expected) {
       return json({ ok: false, error: '未配置访问密码（APP_PASSWORD）' }, 500);
     }
+    const lock = checkLoginLock(env, clientIp);
+    if (lock.locked) {
+      return json({ ok: false, error: `尝试次数过多，请 ${lock.retryAfter} 秒后再试` }, 429);
+    }
     if (!safeEqual(password, expected)) {
+      recordLoginFail(env, clientIp);
+      log(env, 'login-fail', '密码错误', clientIp);
       return json({ ok: false, error: '密码错误' }, 401);
     }
+    clearLoginLock(clientIp);
+    log(env, 'login', '登录成功', clientIp);
     const token = await issueToken(env);
     if (!token) return json({ ok: false, error: '未配置访问密码（APP_PASSWORD）' }, 500);
     return json({ ok: true }, 200, authCookieHeaders(env, token));
   }
 
   if (method === 'POST' && path === 'auth/logout') {
+    log(env, 'logout', '退出登录', clientIp);
     return json({ ok: true }, 200, clearCookieHeaders());
   }
 
@@ -76,6 +103,11 @@ async function route(method, path, request, env) {
     return json({ ok: true, name: 'vpngate', version: DEFAULTS.version, storage });
   }
 
+  // —— 无鉴权探活（中间件白名单放行；仅返回最基本信息） ——
+  if (method === 'GET' && path === 'healthz') {
+    return json({ ok: true, name: 'vpngate', version: DEFAULTS.version, ts: Date.now() });
+  }
+
   // —— 配置 ——
   if (path === 'config') {
     if (method === 'GET') {
@@ -86,22 +118,38 @@ async function route(method, path, request, env) {
       const body = await readJson(request);
       if (body == null) return json({ ok: false, error: '请求体必须为 JSON' }, 400);
       const { config, errors, storage } = await saveConfig(env, body);
+      log(env, 'config-save', `生效存储=${storage.effective} 校验错误=${errors.length}`, clientIp);
       return json({ ok: errors.length === 0, config, errors, storage });
     }
   }
   if (method === 'POST' && path === 'config/reset') {
     const { config, storage } = await resetConfig(env);
+    log(env, 'config-reset', '恢复默认配置', clientIp);
     return json({ ok: true, config, storage });
+  }
+  if (method === 'PUT' && path === 'config/storage') {
+    const body = await readJson(request);
+    if (!body || typeof body.mode !== 'string') return json({ ok: false, error: '缺少 mode（auto/memory/kv）' }, 400);
+    const r = await setStorageMode(env, body.mode);
+    log(env, 'storage-switch', `切换存储模式 → ${body.mode}${r.error ? '（' + r.error + '）' : ''}`, clientIp);
+    return r.ok ? json({ ok: true, storage: r.storage, error: r.error || '' }) : json({ ok: false, error: r.error, storage: r.storage }, 400);
+  }
+  if (method === 'POST' && path === 'config/storage/sync') {
+    const r = await syncToKv(env);
+    log(env, 'storage-sync', r.ok ? '内存配置已同步到 KV' : `同步失败：${r.error}`, clientIp);
+    return r.ok ? json({ ok: true, storage: r.storage }) : json({ ok: false, error: r.error, storage: r.storage }, 502);
   }
 
   // —— 服务器列表 ——
   if (method === 'GET' && path === 'servers') {
     const q = queryParams(request.url);
     const { config } = await loadConfig(env);
+    const force = q.refresh === '1' || q.refresh === 'true';
     const result = await getServers(env, config, {
-      force: q.refresh === '1' || q.refresh === 'true',
+      force,
       sourceId: q.source || undefined,
     });
+    if (force) log(env, 'servers-refresh', `强制刷新（源=${q.source || '全部'}）`, clientIp);
     // 列表返回轻量字段（不含 base64）
     const light = result.servers.map((s) => {
       const o = {};
@@ -121,20 +169,54 @@ async function route(method, path, request, env) {
     });
   }
 
-  // —— 优选 ——
+  // —— 优选（结果短时缓存，避免重复探测） ——
   if (method === 'POST' && path === 'optimize') {
     const body = await readJson(request);
     const { config } = await loadConfig(env);
-    // 允许请求体临时覆盖部分参数（不落盘）：country / topN / requireReachable
+    // 允许请求体临时覆盖部分参数（不落盘）：country / topN / requireReachable / refresh
     const overrides = body && typeof body === 'object' ? body : {};
-    if (overrides.country) {
-      config.filters.enabledCountryCodes = String(overrides.country).toUpperCase().split(',').map((s) => s.trim()).filter(Boolean);
-    }
-    if (overrides.topN) config.optimize.topN = Number.parseInt(overrides.topN, 10) || config.optimize.topN;
-    if (typeof overrides.requireReachable === 'boolean') config.probe.requireReachable = overrides.requireReachable;
+    const ovCountry = overrides.country ? String(overrides.country).toUpperCase().split(',').map((s) => s.trim()).filter(Boolean) : null;
+    const ovTopN = overrides.topN ? Number.parseInt(overrides.topN, 10) : null;
+    const ovReq = typeof overrides.requireReachable === 'boolean' ? overrides.requireReachable : null;
+    const ovRefresh = overrides.refresh === true || overrides.refresh === '1';
+    if (ovCountry) config.filters.enabledCountryCodes = ovCountry;
+    if (ovTopN) config.optimize.topN = ovTopN;
+    if (ovReq !== null) config.probe.requireReachable = ovReq;
 
-    const result = await getServers(env, config, { force: overrides.refresh === true || overrides.refresh === '1' });
+    // 缓存键：仅与影响优选结果的配置+覆盖参数相关
+    const sig = await sha1Hex(JSON.stringify({
+      d: config.dataSources,
+      f: config.filters,
+      w: config.weights,
+      n: config.norm,
+      p: { ports: config.probe.ports, timeoutMs: config.probe.timeoutMs, probeCount: config.probe.probeCount, concurrency: config.probe.concurrency, requireReachable: config.probe.requireReachable, reachableBoost: config.probe.reachableBoost },
+      o: config.optimize.topN,
+      ov: { c: ovCountry, n: ovTopN, r: ovReq, ref: ovRefresh },
+    }));
+    const ttl = Math.max(0, config.optimize.cacheSeconds || 0);
+    const cacheKey = `https://vpngate.local/cache/optimize/${sig}`;
+    if (ttl > 0) {
+      try {
+        const cached = await caches.default.match(cacheKey);
+        if (cached) {
+          const data = await cached.json();
+          return json({ ok: true, cacheHit: true, ...data });
+        }
+      } catch { /* 缓存不可用则直接执行 */ }
+    }
+
+    const result = await getServers(env, config, { force: ovRefresh });
     const { ranked, probed } = await runOptimize(result.servers, config);
+    log(env, 'optimize', `候选 ${probed.length} 个 / 达标 ${ranked.length} 个`, clientIp);
+
+    if (ttl > 0) {
+      try {
+        await caches.default.put(cacheKey, new Response(
+          JSON.stringify({ ranked, probed, statuses: result.statuses, updatedAt: result.updatedAt }),
+          { headers: { 'Cache-Control': `s-maxage=${ttl}` } },
+        ));
+      } catch { /* 写缓存失败不影响结果 */ }
+    }
     return json({ ok: true, ranked, probed, statuses: result.statuses, updatedAt: result.updatedAt });
   }
 
@@ -149,6 +231,7 @@ async function route(method, path, request, env) {
     const ovpn = buildOvpn(server, config);
     if (!ovpn) return json({ ok: false, error: '该服务器缺少 OpenVPN 配置数据' }, 404);
     const fileName = `vpngate-${server.countryShort}-${server.ip}.ovpn`;
+    log(env, 'ovpn', `下载配置 ${server.ip} (${server.countryShort})`, clientIp);
     return new Response(ovpn.text, {
       headers: {
         'Content-Type': 'application/x-openvpn-profile; charset=utf-8',
@@ -178,6 +261,14 @@ async function route(method, path, request, env) {
     const ports = Array.isArray(body.ports) && body.ports.length > 0 ? body.ports : config.probe.ports;
     const result = await probeServer({ ip: body.ip }, ports, config.probe.timeoutMs);
     return json({ ok: true, ...result, ports });
+  }
+
+  // —— 操作日志 ——
+  if (method === 'GET' && path === 'logs') {
+    const q = queryParams(request.url);
+    const limit = Math.min(100, Math.max(1, Number.parseInt(q.limit, 10) || 50));
+    const logs = await readLogs(env, limit);
+    return json({ ok: true, logs });
   }
 
   return json({ ok: false, error: `未知路由: ${method} /api/${path}` }, 404);

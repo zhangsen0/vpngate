@@ -8,10 +8,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { validateConfig, mergeConfig, DEFAULTS } from '../functions/_lib/config.js';
+import { validateConfig, mergeConfig, DEFAULTS, loadConfig, saveConfig, setStorageMode, syncToKv } from '../functions/_lib/config.js';
 import { parseCsv, parseJson, normalizeServers } from '../functions/_lib/sources.js';
 import { applyFilters, scoreServer, runOptimize } from '../functions/_lib/optimize.js';
 import { decodeConfig, buildOvpn, nodeParams } from '../functions/_lib/ovpn.js';
+import { checkLoginLock, recordLoginFail, clearLoginLock } from '../functions/_lib/auth.js';
+import { log, readLogs } from '../functions/_lib/log.js';
 
 // ==================== 构造样本数据 ====================
 
@@ -50,6 +52,7 @@ test('validateConfig：越界值收敛、非法类型回退默认', () => {
     filters: { maxPingMs: 50000, hostRegex: '([' },
     probe: { ports: [443, 99999, 'abc'], concurrency: 999 },
     weights: { score: 999, ping: -1 },
+    optimize: { cacheSeconds: 99999 },
   });
   assert.equal(config.fetch.timeoutMs, 60000, 'timeout 应收敛到上限');
   assert.equal(config.fetch.cacheSeconds, 30, 'cache 应收敛到下限');
@@ -61,6 +64,7 @@ test('validateConfig：越界值收敛、非法类型回退默认', () => {
   assert.equal(config.probe.concurrency, 50);
   assert.equal(config.weights.score, 10);
   assert.equal(config.weights.ping, 0);
+  assert.equal(config.optimize.cacheSeconds, 3600, '优选缓存应收敛到上限');
 });
 
 test('validateConfig：数据源为空时恢复默认', () => {
@@ -200,6 +204,83 @@ test('nodeParams：生成可复制的节点参数摘要', () => {
   assert.equal(n.ip, '1.1.1.1');
   assert.equal(n.authUser, 'vpn');
   assert.ok(n.remark.includes('JP'));
+});
+
+// ==================== 存储双模式（KV / 内存） ====================
+
+test('存储双模式：KV 故障自动降级内存，恢复后手动同步回 KV，可手动切换', async () => {
+  const store = new Map();
+  const fail = { flag: false };
+  const kv = {
+    get: async (k) => { if (fail.flag) throw new Error('kv down'); return store.get(k) ?? null; },
+    put: async (k, v) => { if (fail.flag) throw new Error('kv down'); store.set(k, v); },
+  };
+  const env = { VPNGATE_CFG: kv, CONFIG_CACHE_SECONDS: '0' }; // 0 = 关闭缓存，直读直写
+
+  let r = await saveConfig(env, { optimize: { topN: 6 } });
+  assert.equal(r.storage.effective, 'kv', 'KV 可用时应写入 KV');
+  assert.equal(r.config.optimize.topN, 6);
+
+  fail.flag = true; // KV 故障
+  r = await loadConfig(env);
+  assert.equal(r.storage.effective, 'memory', 'KV 故障应自动降级内存');
+  assert.ok(r.storage.degraded, '应标记降级');
+
+  r = await saveConfig(env, { optimize: { topN: 4 } });
+  assert.equal(r.storage.effective, 'memory', '降级期间保存应落内存');
+  assert.equal(r.config.optimize.topN, 4);
+
+  fail.flag = false; // KV 恢复
+  r = await syncToKv(env);
+  assert.equal(r.ok, true, '手动同步应成功');
+  assert.equal(r.storage.effective, 'kv', '同步后应恢复 KV 生效');
+  assert.equal(JSON.parse(store.get('global')).optimize.topN, 4, 'KV 中应为最新配置');
+
+  r = await setStorageMode(env, 'memory');
+  assert.equal(r.ok, true);
+  assert.equal(r.storage.mode, 'memory');
+  r = await saveConfig(env, { optimize: { topN: 3 } });
+  assert.equal(r.storage.effective, 'memory', '仅内存模式下不应写 KV');
+
+  r = await setStorageMode(env, 'kv');
+  assert.equal(r.storage.mode, 'kv');
+  assert.equal(r.storage.effective, 'kv');
+  assert.equal(JSON.parse(store.get('global')).optimize.topN, 3, '切回 KV 应把当前配置同步上去');
+
+  r = await setStorageMode(env, 'invalid');
+  assert.equal(r.ok, false, '非法模式应拒绝');
+});
+
+// ==================== 操作日志 ====================
+
+test('操作日志：记录并可读取（含 IP），落盘到 KV', async () => {
+  const store = new Map();
+  const kv = {
+    get: async (k) => store.get(k) ?? null,
+    put: async (k, v) => { store.set(k, v); },
+  };
+  const env = { VPNGATE_CFG: kv };
+  log(env, 'login', '登录成功', '1.2.3.4');
+  log(env, 'config-save', '生效存储=kv', '1.2.3.4');
+  const logs = await readLogs(env, 10);
+  assert.ok(logs.some((l) => l.act === 'login' && l.ip === '1.2.3.4'), '应返回 login 日志及 IP');
+  assert.ok(logs.some((l) => l.act === 'config-save'), '应返回 config-save 日志');
+  const raw = JSON.parse(store.get('logs:v1') || '[]');
+  assert.ok(raw.length >= 2, 'KV 中应已落盘日志');
+});
+
+// ==================== 登录防爆破 ====================
+
+test('登录防爆破：连续失败锁定，成功后解锁', () => {
+  const env = { LOGIN_MAX_FAIL: '3', LOGIN_LOCK_MIN: '1' };
+  const ip = '203.0.113.7';
+  recordLoginFail(env, ip);
+  recordLoginFail(env, ip);
+  assert.equal(checkLoginLock(env, ip).locked, false, '未达阈值不应锁定');
+  recordLoginFail(env, ip);
+  assert.equal(checkLoginLock(env, ip).locked, true, '达到阈值应锁定');
+  clearLoginLock(ip);
+  assert.equal(checkLoginLock(env, ip).locked, false, '成功后应解锁');
 });
 
 // ==================== 汇总 ====================
