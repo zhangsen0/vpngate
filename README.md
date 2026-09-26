@@ -36,7 +36,7 @@ Cloudflare Pages Functions（functions/）
    ├── /api/logs         操作日志
    ├── /api/healthz      无鉴权探活
    └── /api/auth/*       登录/登出/会话
-数据源（按序回退，全部可在页面配置）：VPNGate 官方 https://www.vpngate.net/api/iphone/（CSV，境外直连常不可达）
+数据源（按序回退，全部可在页面配置）：VPNGate 官方 https://www.vpngate.net/api/iphone/（CSV；国内直连 DNS 被污染不可达，经 CF 边缘 + 浏览器 UA + 失败重试可正常拉取，部署实测 ✅ 97 节点）
 + GitHub 镜像：9xN/auto-ovpn（JSON）、Vepashka94 / NetLops / ezedin63 的 vpngate-mirror（CSV，官方格式）
 ```
 
