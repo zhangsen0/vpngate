@@ -9,9 +9,14 @@
 - **可配置优选**：评分权重、筛选阈值、探测端口、结果条数等全部参数均可在页面修改（存于 Cloudflare KV）。
 - **实测连通**：对静态评分靠前的节点做 TCP 握手探测（Cloudflare 边缘），只推荐真实可达的节点。
 - **本机校验**：CF 边缘可达 ≠ 本机可达（ISP 可能屏蔽该 IP）。提供三种本机校验途径：一键本机探测命令（python3/PowerShell，精确 TCP 结果）、单文件浏览器探测页（本地 http 打开直测）、浏览器直连探测（http 页面自动生效）。结果可粘贴回页面自动标记，支持“仅本机可达”过滤。
-- **多端原生创建 VPN**：节点详情与优选卡片内置「多端」面板。Linux 支持 NetworkManager <b>原生创建</b>系统 VPN 连接（nmcli 导入 + 启停）；iOS/Android 经官方 OpenVPN Connect 一键导入（系统级 IPSec/IKEv2 不支持 OpenVPN 协议）；Windows/macOS 官方客户端一键导入；均附下载、复制链接/命令入口。
+- **多端原生创建 VPN**：节点详情与优选卡片内置「多端」面板。
+  - **🔐 L2TP/IPsec 原生（免客户端）**：VPNGate 节点由 SoftEther 驱动，普遍开放 L2TP/IPsec（PSK=`vpn`、账密 `vpn/vpn`），iOS/Android/Windows/macOS/Linux **系统内置 VPN 直接创建**，无需第三方客户端。Windows 一条命令 `Add-VpnConnection + rasdial` 创建并连接；Linux `network-manager-l2tp + nmcli` 原生创建。
+  - OpenVPN 方式：Linux NetworkManager 原生创建；iOS/Android 官方 OpenVPN Connect 一键导入；Windows/macOS 官方客户端一键导入；均附下载、复制链接/命令入口。
 - **即配即用**：一键下载 .ovpn 配置文件，或复制节点参数（IP / 端口 / 协议 / 账密）。
 - **轻量可信**：无框架单页应用，加载快；信息精炼，只展示关键指标。
+- **KV 少读写 + 操作日志**：配置读取走内存缓存（默认 60s，`CONFIG_CACHE_SECONDS` 可调），KV 只在必要时读写；登录/登出/配置变更/强制刷新/优选/下载等必要操作记录日志（KV 缓冲批量落盘，保留 200 条），页面「日志」面板可查。
+- **存储双模式**：KV / 内存自动降级——KV 故障时自动降级内存模式继续服务，恢复后可在配置面板手动「同步到 KV」；也支持手动切换 `auto / memory / kv`。
+- **安全加固**：登录防爆破（连续失败锁定，`LOGIN_MAX_FAIL`/`LOGIN_LOCK_MIN` 可调）；签名 Cookie 会话（改密即旧会话失效）；`/api/healthz` 无鉴权探活接口；静态资源长缓存。
 - **快速部署**：测试环境手动直传部署包；生产环境 GitHub Actions 自动部署（均托管在 Cloudflare Pages）。
 
 ## 技术架构
@@ -21,13 +26,17 @@
    │  /api/*
    ▼
 Cloudflare Pages Functions（functions/）
-   ├── /api/config      读取/保存配置（KV: VPNGATE_CFG，内存兜底）
-   ├── /api/servers     拉取并解析节点列表（Cache API 缓存，可强制刷新）
-   ├── /api/optimize    评分 + TCP 连通性探测 + 优选排序
-   ├── /api/ovpn        生成 .ovpn 配置（remote 可改写为优选 IP）
-   ├── /api/node        节点参数摘要
-   └── /api/probe       单点连通性测试
-数据源：http://www.vpngate.net/api/iphone/（CSV）+ auto-ovpn GitHub 镜像（JSON）
+   ├── /api/config       读取/保存配置（KV: VPNGATE_CFG，内存缓存 + 双模式降级）
+   ├── /api/config/storage       切换存储模式 / 手动同步内存到 KV
+   ├── /api/servers      拉取并解析节点列表（Cache API 缓存，可强制刷新）
+   ├── /api/optimize     评分 + TCP 连通性探测 + 优选排序（结果短时缓存）
+   ├── /api/ovpn         生成 .ovpn 配置（remote 可改写为优选 IP）
+   ├── /api/node         节点参数摘要
+   ├── /api/probe        单点连通性测试
+   ├── /api/logs         操作日志
+   ├── /api/healthz      无鉴权探活
+   └── /api/auth/*       登录/登出/会话
+数据源：https://www.vpngate.net/api/iphone/（CSV）+ auto-ovpn GitHub 镜像（JSON）
 ```
 
 ## 目录结构
@@ -85,7 +94,7 @@ APP_PASSWORD=admin123
 | 评分权重 | score / ping / speed / uptime / freeSessions | 各指标权重（0~10） |
 | 归一化参考 | scoreRef / pingTargetMs / speedTargetBps / uptimeRefHours / sessionsTarget | 各指标归一化基准 |
 | 连通性探测 | ports / timeoutMs / probeCount / concurrency / requireReachable / reachableBoost | 探测参数与加成 |
-| 优选结果 | topN | 返回条数 |
+| 优选结果 | topN / cacheSeconds | 返回条数 / 优选结果缓存时长（0 关闭） |
 | 节点配置 | rewriteRemoteToIp / appendOptions | remote 改写为优选 IP、附加 OpenVPN 选项 |
 | 界面 | theme / defaultSort | 主题与默认排序 |
 
@@ -94,43 +103,70 @@ APP_PASSWORD=admin123
 > 使用本机探测命令（python3 / PowerShell）或本地 http 打开探测页完成浏览器直测，
 > 结果粘贴回页面即可自动标记；勾选「仅本机可达」可过滤掉本机不可达的节点。
 
+### 配置存储（KV / 内存双模式）
+
+- 配置面板顶部提供「配置存储」区：模式 `auto`（默认，KV 优先）/ `仅内存` / `仅KV`；
+- KV 故障时自动降级为内存模式继续服务（页面与 `/api/health` 会显示降级状态）；
+- KV 恢复后点击「同步内存到 KV」手动写回；切换为 `kv` 模式时也会自动同步一次；
+- 环境变量：`STORAGE_MODE`（默认 auto）、`CONFIG_CACHE_SECONDS`（配置缓存 TTL，默认 60s，0 表示每次直读 KV）。
+
+### 操作日志
+
+- 记录：登录成功/失败、登出、配置保存/恢复、存储模式切换/同步、强制刷新、优选、.ovpn 下载；
+- 日志先入内存缓冲、请求结束时批量落盘（KV 键 `logs:v1`，保留最近 200 条），KV 写频率极低；
+- 页面右上角「日志」可查看最近 50 条（时间 / 动作 / IP / 详情）。
+
 ## 部署
 
 ### 测试环境（手动上传部署包）
 
 ```bash
+APP_PASSWORD=admin123 \
 CF_ACCOUNT=<测试账户ID> CF_TOKEN=<测试API令牌> \
 CF_PROJECT=vpngate-test CF_DOMAIN=vpngate-test.zhangsen.kdns.fr \
 ./scripts/deploy-test.sh
 ```
 
-脚本自动完成：生成部署包 → 创建 Pages 项目 / KV → 绑定 KV → 直传部署包 → 绑定自定义域名 → 校验 DNS。
+脚本自动完成：生成部署包 → 创建 Pages 项目 / KV（如缺）→ wrangler 直传部署包（部署期配置注入真实 KV 绑定）→ 部署后写回 KV 绑定与 `APP_PASSWORD` → 绑定自定义域名 → 校验/提示 DNS。
+
+> 说明：部署后绑定写回是关键步骤——wrangler 部署会用部署目录的 `wrangler.toml` 同步项目级绑定，因此脚本生成带真实 KV id 的配置并从 `dist` 目录执行，部署后再 API 幂等写回绑定与密码。
 
 ### 生产环境（GitHub Actions 自动部署）
 
-1. 在 GitHub 仓库 `Settings → Secrets and variables → Actions` 配置：
+1. 首次初始化（脚本已代为实现，步骤供参考）：
+   - 创建 Pages 项目 `vpngate`、KV 命名空间 `vpngate-cfg`；
+   - 绑定自定义域名 `vpngate.520215.xyz`，并添加 CNAME：`vpngate → <项目默认 pages.dev 域名>`（注意以项目实际 subdomain 为准，不一定是 `vpngate.pages.dev`）；
+   - 项目绑定 KV `VPNGATE_CFG` 与环境变量 `APP_PASSWORD`（secret_text）。
+2. 在 GitHub 仓库 `Settings → Secrets and variables → Actions` 配置：
 
    | Secret | 值 |
    |---|---|
    | `CF_API_TOKEN` | 生产环境 API 令牌 |
    | `CF_ACCOUNT_ID` | 生产环境账户 ID |
+   | `CF_KV_NAMESPACE_ID` | 生产 KV 命名空间 ID |
+   | `CF_APP_PASSWORD` | 访问密码（如 `admin123`） |
 
-2. 首次需要手动创建生产 Pages 项目与 KV 绑定（同测试脚本逻辑，参数换成生产值即可）。
-3. 推送 `main` 分支即自动部署到生产，绑定域名 `vpngate.520215.xyz`。
+3. 推送 `main` 即自动部署：代码检查（语法+单测）→ 生成生产绑定配置 → 组装部署包 → wrangler 直传 → 幂等写回绑定。生产域名 `vpngate.520215.xyz`。
 
 ## API 一览
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /api/health | 健康检查 |
-| GET | /api/config | 读取配置 + SCHEMA |
+| GET | /api/health | 健康检查（含存储状态） |
+| GET | /api/healthz | 无鉴权探活（外部监控用） |
+| GET | /api/config | 读取配置 + SCHEMA + 存储状态 |
 | PUT | /api/config | 保存配置 |
 | POST | /api/config/reset | 恢复默认配置 |
+| PUT | /api/config/storage | 切换存储模式 { mode: auto/memory/kv } |
+| POST | /api/config/storage/sync | 手动把内存配置同步到 KV |
 | GET | /api/servers?refresh=1 | 节点列表（refresh 强制刷新） |
-| POST | /api/optimize | 执行优选 |
+| POST | /api/optimize | 执行优选（可覆盖 country/topN/requireReachable，结果短时缓存） |
 | GET | /api/ovpn?id= | 下载 .ovpn |
 | GET | /api/node?id= | 节点参数 |
 | POST | /api/probe | 单点探测 { ip, ports? } |
+| GET | /api/logs?limit=50 | 操作日志 |
+| POST | /api/auth/login \| logout | 登录 / 登出 |
+| GET | /api/auth/me | 会话状态 |
 
 ## 使用示例
 
