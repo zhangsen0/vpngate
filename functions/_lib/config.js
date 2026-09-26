@@ -78,11 +78,11 @@ export const DEFAULTS = {
     /** 连通性探测端口列表（TCP），按序探测取首个成功 */
     ports: [443, 1194],
     /** 单次探测超时(ms) */
-    timeoutMs: 2500,
+    timeoutMs: 2000,
     /** 静态评分前 N 名进入连通性探测 */
-    probeCount: 20,
+    probeCount: 12,
     /** 探测并发数 */
-    concurrency: 10,
+    concurrency: 15,
     /** 优选结果是否仅保留可连通的节点 */
     requireReachable: true,
     /** 可连通节点评分加成（比例，0~1，加到总分上） */

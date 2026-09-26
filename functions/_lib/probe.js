@@ -27,32 +27,36 @@ async function getConnect() {
  */
 export async function probeTcp(ip, port, timeoutMs) {
   const t0 = Date.now();
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = (ok, rtt, error) => {
-      if (settled) return;
-      settled = true;
-      resolve({ ip, port, ok, rttMs: ok ? rtt : null, error: error || null });
-    };
-
-    (async () => {
-      let socket;
-      try {
-        const connect = await getConnect();
-        // 新版 Socket API：opened/closed 为 Promise（旧式 addEventListener 已移除）
-        socket = connect({ hostname: ip, port });
-        const opened = Promise.resolve(socket.opened).then(() => done(true, Date.now() - t0));
-        const closed = Promise.resolve(socket.closed).catch((e) =>
-          done(false, null, String((e && e.message) || e || 'connection closed')));
-        const timeout = new Promise((r) => setTimeout(() => done(false, null, 'timeout'), timeoutMs));
-        await Promise.race([opened, closed, timeout]);
-        try { socket.close(); } catch { /* 忽略 */ }
-      } catch (e) {
+  let socket = null;
+  let timer = null;
+  try {
+    const connect = await getConnect();
+    socket = connect({ hostname: ip, port });
+    // 新版 Socket API：opened/closed 为 Promise（旧式 addEventListener 已移除）。
+    // 关键：opened/closed 都必须挂 catch，否则不可达 IP 的 opened reject 会产生
+    // unhandled rejection，导致 workerd isolate 报 internal call error、请求挂死。
+    return await new Promise((resolve) => {
+      let settled = false;
+      const done = (ok, rtt, error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         try { socket && socket.close(); } catch { /* 忽略 */ }
-        done(false, null, `connect threw: ${e.message}`);
-      }
-    })();
-  });
+        resolve({ ip, port, ok, rttMs: ok ? rtt : null, error: error || null });
+      };
+      socket.opened
+        .then(() => done(true, Date.now() - t0, null))
+        .catch((e) => done(false, null, String((e && e.message) || e || 'open failed')));
+      socket.closed
+        .then(() => done(false, null, 'closed'))
+        .catch((e) => done(false, null, String((e && e.message) || e || 'closed')));
+      // 超时：触发 done 后立即 close，避免挂起的握手占用资源
+      timer = setTimeout(() => done(false, null, 'timeout'), timeoutMs);
+    });
+  } catch (e) {
+    try { socket && socket.close(); } catch { /* 忽略 */ }
+    return { ip, port, ok: false, rttMs: null, error: `connect threw: ${(e && e.message) || e}` };
+  }
 }
 
 /**

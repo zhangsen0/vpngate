@@ -373,11 +373,15 @@ async function runOptimize() {
   mask.hidden = false;
   document.getElementById('optBody').innerHTML =
     '<div class="empty">正在按配置评分并探测（静态评分前 ' + (state.config.probe.probeCount || 20) + ' 名）…</div>';
+  // 探测受 Cloudflare 边缘 30s 墙钟限制，前端 25s 兜底超时并给出可操作提示
+  const ctrl = new AbortController();
+  const failTimer = setTimeout(() => ctrl.abort(), 25000);
   try {
     const data = await api('/api/optimize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
+      signal: ctrl.signal,
     });
     const ranked = data.ranked || [];
     if (ranked.length === 0) {
@@ -443,7 +447,12 @@ async function runOptimize() {
       });
     }
   } catch (e) {
-    document.getElementById('optBody').innerHTML = `<div class="empty">优选失败：${esc(e.message)}</div>`;
+    const timedOut = e.name === 'AbortError' || (e.message || '').includes('abort');
+    document.getElementById('optBody').innerHTML = timedOut
+      ? '<div class="empty">优选超时：边缘探测节点较慢。可在「配置 → 连通性探测」减小探测数量/超时后重试，或稍后再试。</div>'
+      : `<div class="empty">优选失败：${esc(e.message)}</div>`;
+  } finally {
+    clearTimeout(failTimer);
   }
 }
 
