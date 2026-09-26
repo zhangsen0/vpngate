@@ -98,7 +98,8 @@ ok('登录后首页 → 200', r.status === 200 && r.text.includes('VPNGate'));
 
 for (const asset of ['/app.js', '/style.css', '/login.html']) {
   r = await req(asset);
-  ok(`登录后资源 ${asset} → 200`, r.status === 200);
+  // Pages 对 /login.html 会 308 → /login（去扩展名），页面本体已验证 200
+  ok(`登录后资源 ${asset} → 200 或 308(平台跳转)`, r.status === 200 || r.status === 308);
 }
 
 // ==================== C. 全接口测试 ====================
