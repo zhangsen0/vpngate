@@ -36,7 +36,8 @@ Cloudflare Pages Functions（functions/）
    ├── /api/logs         操作日志
    ├── /api/healthz      无鉴权探活
    └── /api/auth/*       登录/登出/会话
-数据源：https://www.vpngate.net/api/iphone/（CSV）+ auto-ovpn GitHub 镜像（JSON）
+数据源（按序回退，全部可在页面配置）：VPNGate 官方 https://www.vpngate.net/api/iphone/（CSV，境外直连常不可达）
++ GitHub 镜像：9xN/auto-ovpn（JSON）、Vepashka94 / NetLops / ezedin63 的 vpngate-mirror（CSV，官方格式）
 ```
 
 ## 目录结构
@@ -87,7 +88,7 @@ APP_PASSWORD=admin123
 
 | 分组 | 参数 | 说明 |
 |---|---|---|
-| 数据源 | dataSources | 数据源列表（csv / json），按序尝试直到成功 |
+| 数据源 | dataSources | 数据源列表（csv / json），按序尝试直到成功。默认：官方接口（常不可达，自动跳过）+ 4 个 GitHub 镜像（见上文），均可增删改 |
 | 拉取 | timeoutMs / maxServers / cacheSeconds | 超时、节点数上限、缓存时长 |
 | 筛选 | disabledCountryCodes / enabledCountryCodes | 禁用/仅保留国家（两位码） |
 | 筛选 | minUptimeHours / minSpeedMbps / maxPingMs / hostRegex | 在线时长、速度、延迟、主机名白名单 |
