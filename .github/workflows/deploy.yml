@@ -27,9 +27,6 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 安装 zip
-        run: sudo apt-get update && sudo apt-get install -y zip
-
       - name: 代码检查（语法 + 单元测试）
         run: |
           node scripts/check-syntax.mjs
@@ -53,15 +50,13 @@ jobs:
         run: |
           node scripts/package.mjs dist
 
-      - name: 部署到 Cloudflare Pages（生产）
-        uses: cloudflare/pages-action@v1
-        with:
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          projectName: vpngate
-          directory: dist
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
-          wranglerVersion: '4'
+      - name: 部署到 Cloudflare Pages（生产，wrangler 直传）
+        run: |
+          npx -y wrangler@4 pages deploy dist \
+            --project-name vpngate --branch main --commit-dirty=true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
 
       - name: 部署后校验/写回绑定（KV + APP_PASSWORD，幂等）
         run: |
