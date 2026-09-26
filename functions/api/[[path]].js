@@ -173,15 +173,17 @@ async function route(method, path, request, env) {
   if (method === 'POST' && path === 'optimize') {
     const body = await readJson(request);
     const { config } = await loadConfig(env);
-    // 允许请求体临时覆盖部分参数（不落盘）：country / topN / requireReachable / refresh
+    // 允许请求体临时覆盖部分参数（不落盘）：country / topN / requireReachable / probeCount / refresh
     const overrides = body && typeof body === 'object' ? body : {};
     const ovCountry = overrides.country ? String(overrides.country).toUpperCase().split(',').map((s) => s.trim()).filter(Boolean) : null;
     const ovTopN = overrides.topN ? Number.parseInt(overrides.topN, 10) : null;
     const ovReq = typeof overrides.requireReachable === 'boolean' ? overrides.requireReachable : null;
+    const ovProbeCount = overrides.probeCount ? Number.parseInt(overrides.probeCount, 10) : null;
     const ovRefresh = overrides.refresh === true || overrides.refresh === '1';
     if (ovCountry) config.filters.enabledCountryCodes = ovCountry;
     if (ovTopN) config.optimize.topN = ovTopN;
     if (ovReq !== null) config.probe.requireReachable = ovReq;
+    if (ovProbeCount) config.probe.probeCount = Math.min(100, Math.max(1, ovProbeCount));
 
     // 缓存键：仅与影响优选结果的配置+覆盖参数相关
     const sig = await sha1Hex(JSON.stringify({
@@ -191,7 +193,7 @@ async function route(method, path, request, env) {
       n: config.norm,
       p: { ports: config.probe.ports, timeoutMs: config.probe.timeoutMs, probeCount: config.probe.probeCount, concurrency: config.probe.concurrency, requireReachable: config.probe.requireReachable, reachableBoost: config.probe.reachableBoost },
       o: config.optimize.topN,
-      ov: { c: ovCountry, n: ovTopN, r: ovReq, ref: ovRefresh },
+      ov: { c: ovCountry, n: ovTopN, r: ovReq, pc: ovProbeCount, ref: ovRefresh },
     }));
     const ttl = Math.max(0, config.optimize.cacheSeconds || 0);
     const cacheKey = `https://vpngate.local/cache/optimize/${sig}`;

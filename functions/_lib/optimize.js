@@ -61,9 +61,10 @@ export function scoreServer(s, config) {
  * @param {Array} servers - 全量服务器（含 base64 与否均可，仅用轻量字段）
  * @param {object} config - 生效配置
  * @param {Function} [probeFn] - 探测函数（默认 probeServer；单测可注入桩函数）
+ * @param {number} [budgetMs] - 整体探测时间预算（默认 20000，平台 30s 墙钟内兜底）
  * @returns {Promise<{ranked: Array, probed: Array}>}
  */
-export async function runOptimize(servers, config, probeFn = probeServer) {
+export async function runOptimize(servers, config, probeFn = probeServer, budgetMs = 20000) {
   const filtered = applyFilters(servers, config);
 
   // 静态评分排序，取前 probeCount 名探测
@@ -71,11 +72,21 @@ export async function runOptimize(servers, config, probeFn = probeServer) {
   withBase.sort((a, b) => b.baseScore - a.baseScore);
   const candidates = withBase.slice(0, config.probe.probeCount);
 
-  // 并发探测
-  const probed = await chunkParallel(candidates, config.probe.concurrency, async (s) => {
-    const p = await probeFn(s, config.probe.ports, config.probe.timeoutMs);
-    return { ...s, ...p, score: p.reachable ? s.baseScore * (1 + config.probe.reachableBoost) : s.baseScore };
-  });
+  // 并发探测：整体时间预算兜底，超时未返回的候选标记为不可达。
+  // 原因：cloudflare:sockets 走边缘 egress，并发连接可能被限流挂起，
+  // 逐批 Promise.all 会被最慢节点拖死；预算保证请求在平台墙钟内返回。
+  const budget = Math.max(1000, budgetMs);
+  const probed = await (async () => {
+    const results = new Array(candidates.length).fill(null);
+    const tasks = candidates.map((s, i) => (async () => {
+      const p = await probeFn(s, config.probe.ports, config.probe.timeoutMs);
+      results[i] = { ...s, ...p, score: p.reachable ? s.baseScore * (1 + config.probe.reachableBoost) : s.baseScore };
+    })());
+    const done = Promise.all(tasks.map((t) => t.catch(() => {})));
+    const guard = new Promise((r) => setTimeout(r, budget));
+    await Promise.race([done, guard]);
+    return candidates.map((s, i) => results[i] || { ...s, reachable: false, rttMs: null, port: null, error: 'probe timeout', score: s.baseScore });
+  })();
 
   // 是否仅保留可连通节点
   const pool = config.probe.requireReachable ? probed.filter((p) => p.reachable) : probed;
