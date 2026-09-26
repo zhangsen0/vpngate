@@ -30,6 +30,9 @@
       <label class="check">
         <input type="checkbox" id="reachableOnly" /> 仅可连通
       </label>
+      <label class="check" title="仅显示本机校验为可达的节点">
+        <input type="checkbox" id="lcOnly" /> 仅本机可达
+      </label>
       <span class="meta" id="metaText"></span>
     </section>
 
@@ -45,6 +48,7 @@
             <th class="num">评分</th>
             <th class="num">在线</th>
             <th class="num">会话</th>
+            <th>本机</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -86,6 +90,22 @@
         </div>
       </div>
       <div class="modal-body" id="cfgBody"></div>
+    </div>
+  </div>
+
+  <!-- 本机连通性校验 -->
+  <div class="modal-mask" id="lcMask" hidden>
+    <div class="modal modal-wide">
+      <div class="modal-head">
+        <span>本机连通性校验</span>
+        <div class="modal-actions">
+          <button class="btn" id="btnLcProbe" title="页面为 http 访问时可直接探测">浏览器直连探测</button>
+          <button class="btn" id="btnLcCopyCmd" title="生成可在本机终端运行的 TCP 探测命令">复制探测命令</button>
+          <button class="btn" id="btnLcDownload" title="下载单文件探测页，本机 http 打开后浏览器直测">下载探测页</button>
+          <button class="btn-close" id="btnCloseLc" title="关闭">×</button>
+        </div>
+      </div>
+      <div class="modal-body" id="lcBody"></div>
     </div>
   </div>
 

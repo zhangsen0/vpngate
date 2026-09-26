@@ -20,6 +20,8 @@ const state = {
   country: '',
   sort: 'score-desc',
   reachableOnly: false,  // 前端仅按探测结果过滤展示（探测结果存于行数据）
+  lcOnly: false,         // 仅展示本机校验可达的节点
+  local: { results: {}, targets: [] }, // 本机校验结果与当前目标
   storage: 'memory',
 };
 
@@ -134,6 +136,7 @@ function visibleServers() {
   }
   if (state.country) list = list.filter((s) => s.countryShort === state.country);
   if (state.reachableOnly) list = list.filter((s) => s._reachable === true);
+  if (state.lcOnly) list = list.filter((s) => state.local.results[s.id] && state.local.results[s.id].reachable);
   // 排序
   const cmp = {
     'score-desc': (a, b) => (b.score || 0) - (a.score || 0),
@@ -171,6 +174,12 @@ function renderTable() {
       : reachable
         ? `<span class="badge ok">可连通 ${s._rtt}ms</span>`
         : `<span class="badge bad">不可连通</span>`;
+    const lc = state.local.results[s.id];
+    const lcChip = !lc
+      ? '<span class="chip dim">未测</span>'
+      : lc.reachable
+        ? `<span class="chip ok">本机✓ ${lc.rttMs}ms</span>`
+        : `<span class="chip bad">本机✗</span>`;
     return `
       <tr data-id="${esc(s.id)}">
         <td class="num">${i + 1}</td>
@@ -184,6 +193,7 @@ function renderTable() {
         <td class="num">${fmtScore(s.score)}</td>
         <td class="num">${fmtUptime(s.uptimeHours)}</td>
         <td class="num">${s.sessions || '-'}</td>
+        <td>${lcChip}</td>
         <td>${badge}</td>
       </tr>`;
   }).join('');
@@ -191,7 +201,7 @@ function renderTable() {
 
 function renderFoot() {
   document.getElementById('footText').textContent =
-    `v1.0 · 探测延迟为 Cloudflare 边缘测量值，非本机延迟 · 共 ${state.servers.length} 个节点`;
+    `v1.1 · CF 探测延迟为边缘测量值 · 本机校验确认本机网络可达性 · 共 ${state.servers.length} 个节点`;
 }
 
 function fillCountrySelect() {
@@ -223,6 +233,12 @@ function applyTheme(theme) {
 function openDrawer(id) {
   const s = state.servers.find((x) => x.id === id);
   if (!s) return toast('未找到该节点', 'err');
+  const lc = state.local.results[s.id];
+  const lcLine = !lc
+    ? '<div class="section-title">本机校验：<span class="chip dim">未测</span>（推荐对本机网络做可达性确认）</div>'
+    : lc.reachable
+      ? `<div class="section-title">本机校验：<span class="chip ok">可达 ${lc.rttMs}ms</span>（${esc(lc.detail || '')}）</div>`
+      : `<div class="section-title">本机校验：<span class="chip bad">不可达</span>（${esc(lc.detail || '')}）</div>`;
   const body = document.getElementById('drawerBody');
   body.innerHTML = `
     <dl class="kv">
@@ -237,9 +253,11 @@ function openDrawer(id) {
       <dt>日志</dt><dd>${esc(s.logType || '-')}</dd>
       <dt>运营商</dt><dd>${esc(s.operator || '-')}</dd>
     </dl>
+    ${lcLine}
     <div class="section-title">连通性测试（端口 ${(state.config.probe.ports || [443]).join('/')}）</div>
     <div class="row-actions">
-      <button class="btn" data-act="probe" data-id="${esc(s.id)}">测试连通</button>
+      <button class="btn" data-act="probe" data-id="${esc(s.id)}">CF 探测</button>
+      <button class="btn" data-act="lc" data-id="${esc(s.id)}">本机校验</button>
       <button class="btn btn-primary" data-act="ovpn" data-id="${esc(s.id)}">下载 .ovpn</button>
       <button class="btn" data-act="node" data-id="${esc(s.id)}">获取节点参数</button>
     </div>
@@ -341,26 +359,57 @@ async function runOptimize() {
     }
     document.getElementById('optBody').innerHTML = `
       <div class="section-title">共探测 ${(data.probed || []).length} 个候选，${ranked.length} 个达标节点（按最终评分排序）</div>
-      ${ranked.map((r, i) => `
+      <div class="row-actions" style="margin-bottom:10px">
+        <button class="btn" data-act="opt-lc-all">本机校验全部 ${ranked.length} 个</button>
+      </div>
+      ${ranked.map((r, i) => {
+        const lc = state.local.results[r.id];
+        const lcChip = !lc
+          ? '<span class="chip dim">本机未测</span>'
+          : lc.reachable
+            ? `<span class="chip ok">本机✓ ${lc.rttMs}ms</span>`
+            : `<span class="chip bad">本机✗</span>`;
+        return `
         <div class="opt-card">
           <div class="opt-rank">${i + 1}</div>
           <div class="opt-main">
             <div class="row1"><span class="flag">${flagEmoji(r.countryShort)}</span><span class="ip">${esc(r.ip)}</span>
-              <span class="badge ok">${esc(r.hostname)}</span></div>
+              <span class="badge ok">${esc(r.hostname)}</span>${lcChip}</div>
             <div class="row2">端口 ${r.port} · 基础分 ${r.baseScore.toFixed(3)} → ${r.score.toFixed(3)}</div>
           </div>
           <div class="opt-meta">
             <div class="rtt">${r.reachable ? r.rttMs + 'ms' : '不可达'}</div>
-            <div style="margin-top:4px">
+            <div style="margin-top:4px;display:flex;gap:6px;justify-content:flex-end">
+              <button class="btn" data-act="opt-lc" data-id="${esc(r.id)}">本机校验</button>
               <button class="btn" data-act="opt-ovpn" data-id="${esc(r.id)}">下载配置</button>
             </div>
           </div>
-        </div>`).join('')}
-      <div class="section-title">说明：RTT 为 Cloudflare 边缘到节点的 TCP 握手延迟，作为可达性参考。</div>`;
-    // 绑定下载
+        </div>`;
+      }).join('')}
+      <div class="section-title">说明：RTT 为 Cloudflare 边缘到节点的 TCP 握手延迟，作为可达性参考；
+        「本机校验」用于确认你的本机网络是否可达（防止 CF 可达但本机不可达）。</div>`;
+    // 绑定下载与本机校验
     document.querySelectorAll('[data-act="opt-ovpn"]').forEach((btn) => {
       btn.addEventListener('click', () => downloadOvpn(btn.dataset.id));
     });
+    document.querySelectorAll('[data-act="opt-lc"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const s = state.servers.find((x) => x.id === btn.dataset.id);
+        if (s) openLcModal([lcTargetFromServer(s)]);
+      });
+    });
+    const lcAllBtn = document.querySelector('[data-act="opt-lc-all"]');
+    if (lcAllBtn) {
+      lcAllBtn.addEventListener('click', () => {
+        openLcModal(ranked.map((r) => ({
+          id: r.id,
+          ip: r.ip,
+          hostname: r.hostname,
+          countryShort: r.countryShort,
+          ports: (state.config.probe.ports || [443]).slice(0, 3),
+        })));
+      });
+    }
   } catch (e) {
     document.getElementById('optBody').innerHTML = `<div class="empty">优选失败：${esc(e.message)}</div>`;
   }
@@ -473,6 +522,274 @@ async function resetConfigForm() {
   }
 }
 
+// ==================== 本机连通性校验 ====================
+/**
+ * 背景：CF 边缘探测只能证明“Cloudflare 网络可达”，用户本机 ISP 可能屏蔽该 IP。
+ * 本机校验提供三种途径（按可靠性）：
+ *  1. 本机探测命令（bash/python3 或 PowerShell，精确 TCP 连接，推荐）；
+ *  2. 下载单文件探测页，本地 http 打开后用浏览器直测；
+ *  3. 浏览器直连探测（仅当本页以 http:// 访问时有效，https 下被浏览器安全策略禁止）。
+ * 结果存于 state.local.results，可过滤“仅本机可达”并在表格/优选卡片上标记。
+ */
+
+/** 打开本机校验面板（targets: [{id, ip, hostname, countryShort, ports}]） */
+function openLcModal(targets) {
+  state.local.targets = targets;
+  renderLcBody();
+  document.getElementById('lcMask').hidden = false;
+}
+
+/** 由节点 id 构造单节点校验目标 */
+function lcTargetFromServer(s) {
+  return {
+    id: s.id,
+    ip: s.ip,
+    hostname: s.hostname,
+    countryShort: s.countryShort,
+    ports: (state.config.probe.ports || [443]).slice(0, 3),
+  };
+}
+
+/** 面板标题文案 */
+function lcHeadText() {
+  const n = state.local.targets.length;
+  const names = state.local.targets.slice(0, 3).map((t) => `${t.countryShort || ''} ${t.ip}`).join('、');
+  return `待校验 ${n} 个节点：${names}${n > 3 ? ` 等` : ''}`;
+}
+
+function renderLcBody() {
+  const body = document.getElementById('lcBody');
+  const isHttps = location.protocol === 'https:';
+  const hint = isHttps
+    ? `<div class="lc-hint">⚠ 当前页面为 <b>https</b> 访问，浏览器安全策略禁止页面直连 http 目标（混合内容），
+        “浏览器直连探测”不可用。请使用：<b>① 复制探测命令</b>在本机终端运行，或 <b>② 下载探测页</b>后用
+        本地 http 服务打开进行浏览器直测。将结果粘贴回下方输入框即可自动标记。</div>`
+    : `<div class="lc-hint">页面为 <b>http</b> 访问，可直接点击「浏览器直连探测」。注意：浏览器探测仅能确认端口
+        有服务响应，被墙（丢包）与端口未开放均显示失败；精确结果请以本机探测命令为准。</div>`;
+
+  body.innerHTML = `
+    ${hint}
+    <div class="section-title">${esc(lcHeadText())}</div>
+    <div class="lc-targets">
+      ${state.local.targets.map((t) => {
+        const r = state.local.results[t.id];
+        const chip = !r
+          ? '<span class="chip dim">未测</span>'
+          : r.reachable
+            ? `<span class="chip ok">可达 ${r.rttMs}ms</span>`
+            : `<span class="chip bad">不可达</span>`;
+        return `
+        <div class="lc-row" data-id="${esc(t.id)}">
+          <div class="t-ip">
+            <span class="flag">${flagEmoji(t.countryShort)}</span> ${esc(t.ip)}
+            <span class="t-host">${esc(t.hostname)}</span>
+            <span class="t-ports">端口 ${(t.ports || []).join('/')}</span>
+            ${chip}
+          </div>
+          <div class="lc-actions">
+            <button class="btn mini" data-lc="ok" data-id="${esc(t.id)}">标记可达</button>
+            <button class="btn mini" data-lc="bad" data-id="${esc(t.id)}">标记不可达</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="lc-paste">
+      <div class="section-title">粘贴本机探测输出并应用标记（支持 OK / FAIL / TIMEOUT / REFUSED 行）</div>
+      <textarea id="lcPaste" placeholder="例如：&#10;OK 1.2.3.4:443 12ms&#10;TIMEOUT 5.6.7.8:1194 3000ms&#10;REFUSED 9.9.9.9:5555"></textarea>
+      <div class="row-actions">
+        <button class="btn" data-lc="apply">应用标记</button>
+        <span class="cfg-hint" id="lcApplyResult"></span>
+      </div>
+    </div>`;
+}
+
+/** 浏览器直连探测（仅 http 页面生效） */
+async function runBrowserProbe() {
+  if (location.protocol === 'https:') {
+    toast('https 页面禁止浏览器直连，请用命令模式或下载探测页', 'err');
+    return;
+  }
+  const timeout = (state.config.probe.timeoutMs || 2500);
+  const results = await Promise.all(state.local.targets.map(async (t) => {
+    let ok = false, rtt = null, detail = '无响应';
+    for (const port of t.ports || []) {
+      const r = await wsProbe(t.ip, port, timeout);
+      if (r.ok) { ok = true; rtt = r.rtt; detail = r.detail; break; }
+      detail = r.detail;
+    }
+    setLcResult(t.id, ok, rtt, detail);
+    return { id: t.id, ok, rtt, detail };
+  }));
+  const okN = results.filter((r) => r.ok).length;
+  renderLcBody();
+  toast(`浏览器探测完成：${okN}/${results.length} 可达`, okN > 0 ? 'ok' : 'err');
+}
+
+/** 单端口 WebSocket 探测（尽力而为） */
+function wsProbe(ip, port, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (ok, rtt, detail) => {
+      if (settled) return;
+      settled = true;
+      resolve({ ok, rtt, detail });
+    };
+    let ws;
+    try {
+      ws = new WebSocket(`ws://${ip}:${port}/`);
+      const t0 = performance.now();
+      ws.onopen = () => {
+        try { ws.close(); } catch { /* 忽略 */ }
+        done(true, Math.round(performance.now() - t0), `端口 ${port} 响应`);
+      };
+      ws.onclose = () => {
+        try { ws.close(); } catch { /* 忽略 */ }
+        done(false, null, `端口 ${port} 无 HTTP 响应（被墙/未开放/非 Web 服务）`);
+      };
+      setTimeout(() => {
+        try { ws.close(); } catch { /* 忽略 */ }
+        done(false, null, `端口 ${port} 超时（疑似被网络屏蔽）`);
+      }, timeoutMs);
+    } catch {
+      done(false, null, '浏览器安全策略阻止');
+    }
+  });
+}
+
+/** 写入/清除本机校验结果 */
+function setLcResult(id, reachable, rttMs, detail) {
+  if (!id) return;
+  if (reachable === null || reachable === undefined) {
+    delete state.local.results[id];
+  } else {
+    state.local.results[id] = { reachable, rttMs: rttMs || null, detail: detail || '', ts: Date.now() };
+  }
+  renderTable();
+  renderLcBody();
+}
+
+/** 手动标记某节点 */
+function markLc(id, reachable) {
+  setLcResult(id, reachable, null, reachable ? '手动标记' : '手动标记');
+  toast(reachable ? '已标记为可达' : '已标记为不可达', reachable ? 'ok' : 'err');
+}
+
+/** 解析探测输出并应用标记 */
+function applyLcParsed(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const byNode = new Map(); // nodeId → {reachable, rttMs, detail}
+  for (const raw of lines) {
+    const m = raw.trim().match(/^(OK|FAIL|TIMEOUT|REFUSED)\s+([\d.]+):(\d+)(?:\s+(\d+)ms)?/i);
+    if (!m) continue;
+    const [, status, ip, port, rttRaw] = m;
+    const rtt = rttRaw ? Number.parseInt(rttRaw, 10) : null;
+    const target = state.local.targets.find((t) => t.ip === ip);
+    if (!target) continue;
+    const cur = byNode.get(target.id) || { reachable: false, rttMs: null, detail: '' };
+    if (status.toUpperCase() === 'OK') {
+      cur.reachable = true;
+      if (cur.rttMs == null || (rtt != null && rtt < cur.rttMs)) cur.rttMs = rtt;
+    } else {
+      cur.detail = (cur.detail ? cur.detail + '；' : '') + `${status} ${ip}:${port}`;
+    }
+    byNode.set(target.id, cur);
+  }
+  let applied = 0;
+  for (const [id, r] of byNode) {
+    setLcResult(id, r.reachable, r.reachable ? r.rttMs : null, r.detail || '本机命令探测');
+    applied++;
+  }
+  const el = document.getElementById('lcApplyResult');
+  if (el) el.textContent = applied > 0 ? `已应用 ${applied} 个节点` : '未解析到有效行（格式：OK/FAIL/TIMEOUT/REFUSED ip:port 12ms）';
+  return applied;
+}
+
+/** 生成本机探测命令（win: PowerShell；其他: python3） */
+function lcCmd() {
+  const flat = [];
+  for (const t of state.local.targets) {
+    for (const p of (t.ports || [])) flat.push(`${t.ip}:${p}`);
+  }
+  const list = JSON.stringify(flat);
+  if (/windows/i.test(navigator.userAgent)) {
+    return `$targets=@(${flat.map((x) => `'${x}'`).join(',')}); foreach($t in $targets){ $ip,$p=$t -split ':'; $sw=[System.Diagnostics.Stopwatch]::StartNew(); $ok=Test-NetConnection -ComputerName $ip -Port $p -InformationLevel Quiet -WarningAction SilentlyContinue; $sw.Stop(); if($ok){"OK $t $($sw.ElapsedMilliseconds)ms"}else{"TIMEOUT $t $($sw.ElapsedMilliseconds)ms"} }`;
+  }
+  return `python3 - <<'EOF'
+import socket,time
+targets=${list}
+for t in targets:
+    ip,p=t.split(':'); p=int(p); s=time.time()
+    try:
+        sck=socket.create_connection((ip,p),timeout=3); sck.close()
+        print(f"OK {t} {int((time.time()-s)*1000)}ms")
+    except socket.timeout:
+        print(f"TIMEOUT {t} {int((time.time()-s)*1000)}ms")
+    except OSError as e:
+        print(f"REFUSED {t}" if e.errno==111 else f"FAIL {t}")
+EOF`;
+}
+
+async function copyLcCmd() {
+  const cmd = lcCmd();
+  try {
+    await navigator.clipboard.writeText(cmd);
+    toast('探测命令已复制，请在本机终端运行', 'ok');
+  } catch {
+    toast('复制失败，请手动选择复制', 'err');
+  }
+}
+
+/** 下载单文件探测页（本机 http 打开后浏览器直测） */
+function downloadProbePage() {
+  const targets = state.local.targets.map((t) => ({
+    ip: t.ip, hostname: t.hostname, cc: t.countryShort, ports: (t.ports || []).slice(0, 3),
+  }));
+  const html = `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><title>VPNGate 本机探测页</title>
+<style>
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#0f1115;color:#e6e9ef;padding:24px;max-width:760px;margin:0 auto}
+h1{font-size:18px} .hint{color:#8b93a5;font-size:13px;background:#171a21;border:1px solid #2a2f3a;border-radius:10px;padding:10px 12px}
+button{padding:8px 16px;border-radius:8px;border:1px solid #2a2f3a;background:#1e222c;color:#e6e9ef;cursor:pointer;font-size:13px}
+button:hover{border-color:#3b82f6} .btn-p{background:#3b82f6;color:#fff;border-color:#3b82f6}
+table{width:100%;border-collapse:collapse;margin-top:14px}
+th,td{padding:8px 10px;border-bottom:1px solid #2a2f3a;text-align:left;font-size:13px}
+th{color:#8b93a5} .mono{font-family:monospace} .ok{color:#22c55e;font-weight:600} .bad{color:#ef4444;font-weight:600}
+textarea{width:100%;min-height:90px;margin-top:12px;background:#171a21;color:#e6e9ef;border:1px solid #2a2f3a;border-radius:8px;padding:8px;font-family:monospace;font-size:12px}
+</style></head><body>
+<h1>VPNGate 本机连通性探测</h1>
+<div class="hint">请在<b>本地</b>打开本页面：在文件所在目录运行 <b>python3 -m http.server 8000</b>，然后浏览器访问
+<b>http://127.0.0.1:8000/vpngate-probe.html</b>（必须 http，不能用 file:// 或 https，否则浏览器会拦截探测）。
+点击「开始探测」后，把结果复制回主站「本机连通性校验」面板粘贴即可自动标记。</div>
+<div style="margin-top:12px"><button class="btn-p" id="run">开始探测</button>
+<button id="copy">复制结果</button></div>
+<table id="tb"><thead><tr><th>#</th><th>国家</th><th>IP</th><th>主机名</th><th>端口</th><th>结果</th><th>RTT</th></tr></thead><tbody></tbody></table>
+<textarea id="out" placeholder="探测结果输出区"></textarea>
+<script>
+var TARGETS=${JSON.stringify(targets)};
+var rows=[];
+function $(id){return document.getElementById(id)}
+function flag(cc){if(!cc||cc.length!==2)return '';return String.fromCodePoint.apply(null,[...cc.toUpperCase()].map(function(c){return 0x1f1e6+c.charCodeAt(0)-65}))}
+function wsProbe(ip,port,timeout){return new Promise(function(resolve){var settled=false;function done(ok,rtt,detail){if(settled)return;settled=true;resolve({ok:ok,rtt:rtt,detail:detail})}
+var ws;try{ws=new WebSocket('ws://'+ip+':'+port+'/');var t0=performance.now();ws.onopen=function(){try{ws.close()}catch(e){}done(true,Math.round(performance.now()-t0),'响应')}
+ws.onclose=function(){try{ws.close()}catch(e){}done(false,null,'无HTTP响应')}
+setTimeout(function(){try{ws.close()}catch(e){}done(false,null,'超时')},timeout)}catch(e){done(false,null,'安全策略')}})}
+$('run').addEventListener('click',function(){var tb=$('tb').getElementsByTagName('tbody')[0];tb.innerHTML='<tr><td colspan="7">探测中…（并行，请稍候）</td></tr>';
+Promise.all(TARGETS.map(function(t){return (async function(){var ok=false,rtt=null,detail='';for(var i=0;i<t.ports.length;i++){var r=await wsProbe(t.ip,t.ports[i],3000);if(r.ok){ok=true;rtt=r.rtt;detail=r.detail+' 端口'+t.ports[i];break}detail=r.detail+' 端口'+t.ports[i]}
+rows.push({ip:t.ip,cc:t.cc,host:t.hostname,ports:t.ports.join('/'),ok:ok,rtt:rtt,detail:detail});return rows[rows.length-1]})()}))
+.then(function(list){tb.innerHTML=list.map(function(r,i){return '<tr><td>'+(i+1)+'</td><td>'+flag(r.cc)+' '+r.cc+'</td><td class="mono">'+r.ip+'</td><td>'+r.host+'</td><td>'+r.ports+'</td><td class="'+(r.ok?'ok':'bad')+'">'+(r.ok?'可达':'不可达')+'</td><td>'+(r.rtt!=null?r.rtt+'ms':r.detail)+'</td></tr>'}).join('');
+$('out').value=list.map(function(r){return (r.ok?'OK':'FAIL')+' '+r.ip+':0'+(r.rtt!=null?' '+r.rtt+'ms':'')+' '+r.detail}).join('\\n')})});
+$('copy').addEventListener('click',function(){var lines=rows.map(function(r){return (r.ok?'OK':'FAIL')+' '+r.ip+':'+r.ports.split('/')[0]+(r.rtt!=null?' '+r.rtt+'ms':'')}).join('\\n');
+$('out').value=lines;navigator.clipboard.writeText(lines).then(function(){alert('已复制，请粘贴回主站')},function(){alert('请手动复制下方内容')})});
+</script></body></html>`;
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'vpngate-probe.html';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('探测页已下载：python3 -m http.server 8000 后 http 打开', 'ok');
+}
+
 // ==================== 事件绑定 ====================
 
 function bindEvents() {
@@ -499,6 +816,10 @@ function bindEvents() {
     state.reachableOnly = e.target.checked;
     renderTable();
   });
+  document.getElementById('lcOnly').addEventListener('change', (e) => {
+    state.lcOnly = e.target.checked;
+    renderTable();
+  });
 
   // 表格行点击 → 详情；事件委托
   document.getElementById('serverTbody').addEventListener('click', (e) => {
@@ -516,10 +837,26 @@ function bindEvents() {
   document.getElementById('btnCloseCfg').addEventListener('click', () => {
     document.getElementById('cfgMask').hidden = true;
   });
+  document.getElementById('btnCloseLc').addEventListener('click', () => {
+    document.getElementById('lcMask').hidden = true;
+  });
   document.querySelectorAll('.modal-mask').forEach((mask) => {
     mask.addEventListener('click', (e) => {
       if (e.target === mask) mask.hidden = true;
     });
+  });
+
+  // 本机校验面板操作
+  document.getElementById('btnLcProbe').addEventListener('click', runBrowserProbe);
+  document.getElementById('btnLcCopyCmd').addEventListener('click', copyLcCmd);
+  document.getElementById('btnLcDownload').addEventListener('click', downloadProbePage);
+  document.getElementById('lcBody').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-lc]');
+    if (!btn) return;
+    const { lc, id } = btn.dataset;
+    if (lc === 'ok') markLc(id, true);
+    if (lc === 'bad') markLc(id, false);
+    if (lc === 'apply') applyLcParsed(document.getElementById('lcPaste').value);
   });
 
   // 抽屉内操作（事件委托）
@@ -530,6 +867,10 @@ function bindEvents() {
     if (act === 'probe') probeServerById(id);
     if (act === 'ovpn') downloadOvpn(id);
     if (act === 'node') showNodeParams(id);
+    if (act === 'lc') {
+      const s = state.servers.find((x) => x.id === id);
+      if (s) openLcModal([lcTargetFromServer(s)]);
+    }
   });
 
   // 配置保存/重置
