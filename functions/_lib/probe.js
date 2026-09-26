@@ -29,32 +29,27 @@ export async function probeTcp(ip, port, timeoutMs) {
   const t0 = Date.now();
   return new Promise((resolve) => {
     let settled = false;
-    const done = (ok, rtt) => {
+    const done = (ok, rtt, error) => {
       if (settled) return;
       settled = true;
-      resolve({ ip, port, ok, rttMs: ok ? rtt : null });
+      resolve({ ip, port, ok, rttMs: ok ? rtt : null, error: error || null });
     };
 
     (async () => {
       let socket;
       try {
         const connect = await getConnect();
+        // 新版 Socket API：opened/closed 为 Promise（旧式 addEventListener 已移除）
         socket = connect({ hostname: ip, port });
-        socket.addEventListener('opened', () => {
-          try { socket.close(); } catch { /* 忽略 */ }
-          done(true, Date.now() - t0);
-        }, { once: true });
-        socket.addEventListener('error', () => {
-          try { socket.close(); } catch { /* 忽略 */ }
-          done(false, null);
-        }, { once: true });
-        setTimeout(() => {
-          try { socket.close(); } catch { /* 忽略 */ }
-          done(false, null);
-        }, timeoutMs);
-      } catch {
+        const opened = Promise.resolve(socket.opened).then(() => done(true, Date.now() - t0));
+        const closed = Promise.resolve(socket.closed).catch((e) =>
+          done(false, null, String((e && e.message) || e || 'connection closed')));
+        const timeout = new Promise((r) => setTimeout(() => done(false, null, 'timeout'), timeoutMs));
+        await Promise.race([opened, closed, timeout]);
+        try { socket.close(); } catch { /* 忽略 */ }
+      } catch (e) {
         try { socket && socket.close(); } catch { /* 忽略 */ }
-        done(false, null);
+        done(false, null, `connect threw: ${e.message}`);
       }
     })();
   });
@@ -68,9 +63,11 @@ export async function probeTcp(ip, port, timeoutMs) {
  * @returns {Promise<{reachable: boolean, rttMs: number|null, port: number|null}>}
  */
 export async function probeServer(server, ports, timeoutMs) {
+  let lastError = null;
   for (const port of ports) {
     const r = await probeTcp(server.ip, port, timeoutMs);
-    if (r.ok) return { reachable: true, rttMs: r.rttMs, port };
+    if (r.ok) return { reachable: true, rttMs: r.rttMs, port, error: null };
+    if (r.error) lastError = r.error;
   }
-  return { reachable: false, rttMs: null, port: null };
+  return { reachable: false, rttMs: null, port: null, error: lastError };
 }

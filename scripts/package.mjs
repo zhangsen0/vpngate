@@ -5,7 +5,11 @@
  *   dist/
  *   ├── index.html / app.js / style.css / login.html   （public/ 内容平铺到根）
  *   ├── functions/                                      （API + 中间件）
- *   ├── wrangler.toml + _headers                         （配置文件）
+ *   └── _headers                                         （响应头）
+ *
+ * 注意：wrangler.toml 仅用于本地开发（含占位 KV id），**不打包进部署包**，
+ *      远程部署时 KV 绑定与环境变量一律通过 CF 控制台/API 的项目级
+ *      deployment_configs 配置，避免占位配置覆盖线上绑定。
  *
  * 测试环境与生产环境（GitHub Actions）均以该目录上传部署。
  *
@@ -32,16 +36,15 @@ for (const name of readdirSync(publicDir)) {
 // functions/ 整体拷贝（Pages Functions 编译入口）
 cpSync(join(ROOT, 'functions'), join(OUT_DIR, 'functions'), { recursive: true });
 
-// 附带配置文件（本地开发用；远程绑定通过 CF 控制台/API 配置）
-for (const f of ['wrangler.toml', '_headers']) {
-  const src = join(ROOT, f);
-  if (existsSync(src)) copyFileSync(src, join(OUT_DIR, f));
+// 附带响应头文件（不打包 wrangler.toml：避免占位 KV 覆盖线上绑定）
+if (existsSync(join(ROOT, '_headers'))) {
+  copyFileSync(join(ROOT, '_headers'), join(OUT_DIR, '_headers'));
 }
 
 // 可选：打 zip 归档（部分部署流程需要单文件）
 if (process.argv.includes('--zip')) {
   const zipPath = join(ROOT, 'dist', 'deploy.zip');
-  const items = ['index.html', 'app.js', 'style.css', 'login.html', 'functions', 'wrangler.toml', ...(existsSync(join(OUT_DIR, '_headers')) ? ['_headers'] : [])].join(' ');
+  const items = ['index.html', 'app.js', 'style.css', 'login.html', 'functions', ...(existsSync(join(OUT_DIR, '_headers')) ? ['_headers'] : [])].join(' ');
   try {
     execSync(`cd "${OUT_DIR}" && zip -qr "${zipPath}" ${items}`, { stdio: 'inherit' });
     console.log(`zip 已生成：${zipPath}`);
@@ -52,4 +55,4 @@ if (process.argv.includes('--zip')) {
 }
 
 console.log(`部署包已生成：${OUT_DIR}`);
-console.log('部署包内容：public/* → 根目录，functions/ → functions/，wrangler.toml + _headers');
+console.log('部署包内容：public/* → 根目录，functions/ → functions/，_headers（不含 wrangler.toml）');

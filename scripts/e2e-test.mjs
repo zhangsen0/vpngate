@@ -68,7 +68,11 @@ ok('未登录访问 API → 401', r.status === 401 && r.json && r.json.ok === fa
 r = await req('/api/auth/me');
 ok('/api/auth/me 未登录 → authed:false', r.status === 200 && r.json && r.json.authed === false);
 
-r = await req('/login.html');
+r = await req('/api/healthz');
+ok('/api/healthz 无鉴权探活 → 200', r.status === 200 && r.json && r.json.ok === true);
+
+// Pages 会把 /login.html 自动 308 到 /login（去扩展名），因此登录页以 /login 验证
+r = await req('/login');
 ok('登录页可访问 → 200', r.status === 200 && r.text.includes('访问密码'));
 
 r = await req('/api/auth/login', {
@@ -99,6 +103,9 @@ for (const asset of ['/app.js', '/style.css', '/login.html']) {
 
 // ==================== C. 全接口测试 ====================
 section('C. 全接口测试');
+
+r = await req('/api/healthz');
+ok('GET /api/healthz 无鉴权探活 → 200', r.status === 200 && r.json && r.json.ok === true);
 
 r = await req('/api/health');
 ok('GET /api/health → ok', r.status === 200 && r.json && r.json.ok === true && r.json.name === 'vpngate');
@@ -176,6 +183,37 @@ ok('POST /api/probe 缺 ip → 400', r.status === 400);
 
 r = await req('/api/not-exist');
 ok('未知路由 → 404', r.status === 404);
+
+// 存储模式：切仅内存 → 同步回 KV → 恢复自动
+r = await req('/api/config/storage', {
+  method: 'PUT', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ mode: 'memory' }),
+});
+ok('切换存储模式为 memory → 生效', r.status === 200 && r.json && r.json.storage.mode === 'memory' && r.json.storage.effective === 'memory');
+
+r = await req('/api/config/storage', {
+  method: 'PUT', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ mode: 'kv' }),
+});
+ok('切换回 kv 模式并自动同步 → 生效', r.status === 200 && r.json && r.json.storage.mode === 'kv' && r.json.storage.effective === 'kv');
+
+r = await req('/api/config/storage', {
+  method: 'PUT', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ mode: 'invalid' }),
+});
+ok('非法存储模式 → 400', r.status === 400);
+
+r = await req('/api/config/storage', {
+  method: 'PUT', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ mode: 'auto' }),
+});
+ok('恢复自动模式 → 生效', r.status === 200 && r.json && r.json.storage.mode === 'auto');
+
+r = await req('/api/config/storage/sync', { method: 'POST' });
+ok('手动同步内存到 KV → 成功', r.status === 200 && r.json && r.json.ok === true && r.json.storage.effective === 'kv');
+
+r = await req('/api/logs?limit=20');
+ok('GET /api/logs → 返回日志（含 login/config-save 等）', r.status === 200 && r.json && r.json.ok && Array.isArray(r.json.logs) && r.json.logs.some((l) => l.act === 'login' || l.act === 'config-save'));
 
 // ==================== D. 登出与会话失效 ====================
 section('D. 登出与会话失效');

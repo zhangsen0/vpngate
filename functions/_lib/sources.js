@@ -113,7 +113,7 @@ function parseIntOf(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** 归一化：给服务器补 id 并裁剪字段（去 base64）供列表返回 */
+/** 归一化：给服务器补 id 并补齐可选字段（保留 configBase64 供生成配置；列表返回时由路由裁剪） */
 export function normalizeServers(rawServers) {
   return rawServers
     .filter((s) => s.ip && /^\d+\.\d+\.\d+\.\d+$/.test(s.ip))
@@ -131,6 +131,8 @@ export function normalizeServers(rawServers) {
         uptimeHours: s.uptimeHours,
         logType: s.logType,
         operator: s.operator,
+        // 保留 base64（.ovpn 生成必需；大字段仅在 /api/servers 路由中被裁剪）
+        configBase64: s.configBase64 || '',
       };
       return base;
     });

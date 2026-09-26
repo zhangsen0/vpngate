@@ -16,7 +16,8 @@ export async function onRequest(context) {
   const path = url.pathname;
 
   // 登录相关路径与无鉴权探活接口始终放行
-  if (path === '/login.html' || path.startsWith('/api/auth/') || path === '/api/healthz') {
+  // 注意：Pages 会把 /login.html 自动 308 到 /login（去扩展名），因此两个路径都要放行
+  if (path === '/login.html' || path === '/login' || path.startsWith('/api/auth/') || path === '/api/healthz') {
     return next();
   }
 

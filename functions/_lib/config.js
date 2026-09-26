@@ -16,7 +16,7 @@ export const DEFAULT_SOURCES = [
   {
     id: 'vpngate-official',
     name: 'VPNGate 官方接口',
-    url: 'http://www.vpngate.net/api/iphone/',
+    url: 'https://www.vpngate.net/api/iphone/',
     type: 'csv',
     enabled: true,
   },

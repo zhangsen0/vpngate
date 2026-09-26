@@ -1,10 +1,8 @@
 # 本地开发配置（wrangler pages dev 使用）
-# 远程部署时，Pages 的 KV 绑定通过 CF 控制台/API 配置（见 README 部署章节）
+# 注意：远程部署（手动/CI）时**不要**在本文中配置 kv_namespaces/env 等绑定，
+#       否则会覆盖 CF 控制台/API 的项目级配置。远程绑定统一走
+#       Pages 项目 deployment_configs（绑定名 VPNGATE_CFG、环境变量 APP_PASSWORD）。
+# 本地开发如需 KV，请用：wrangler pages dev public --kv VPNGATE_CFG
 name = "vpngate"
 compatibility_date = "2025-09-01"
 pages_build_output_dir = "public"
-
-# 本地开发 KV 绑定（占位；远程绑定名必须一致：VPNGATE_CFG）
-[[kv_namespaces]]
-binding = "VPNGATE_CFG"
-id = "00000000000000000000000000000000"
