@@ -250,6 +250,14 @@ function openDrawer(id) {
     : lc.reachable
       ? `<div class="section-title">本机校验：<span class="chip ok">可达 ${lc.rttMs}ms</span>（${esc(lc.detail || '')}）</div>`
       : `<div class="section-title">本机校验：<span class="chip bad">不可达</span>（${esc(lc.detail || '')}）</div>`;
+  const l2tpParams = `服务器 ${s.ip}\n类型 L2TP/IPsec (PSK)\nPSK vpn\n用户名 vpn\n密码 vpn`;
+  const l2tpLine = `
+    <div class="section-title">L2TP/IPsec 原生参数（系统内置 VPN，免客户端）</div>
+    <div class="code-box">${esc(l2tpParams)}</div>
+    <div class="row-actions">
+      <button class="btn btn-sm" data-act="l2tp-copy" data-text="${esc(l2tpParams)}">复制参数</button>
+      <button class="btn btn-sm" data-act="pf" data-id="${esc(s.id)}">各端一键创建</button>
+    </div>`;
   const body = document.getElementById('drawerBody');
   body.innerHTML = `
     <dl class="kv">
@@ -265,7 +273,8 @@ function openDrawer(id) {
       <dt>运营商</dt><dd>${esc(s.operator || '-')}</dd>
     </dl>
     ${lcLine}
-    <div class="section-title">连通性测试（端口 ${(state.config.probe.ports || [443]).join('/')}）</div>
+    ${l2tpLine}
+    <div class="section-title">OpenVPN 连通性测试（端口 ${(state.config.probe.ports || [443]).join('/')}）</div>
     <div class="row-actions">
       <button class="btn" data-act="probe" data-id="${esc(s.id)}">CF 探测</button>
       <button class="btn" data-act="lc" data-id="${esc(s.id)}">本机校验</button>
@@ -561,7 +570,25 @@ async function copyText(text, okMsg) {
 
 /** 平台面板模板（url: 配置下载地址，label: 文件名） */
 function pfPanelHtml(platform, url, label) {
+  const ip = label.replace(/^vpngate-[A-Za-z]{2}-/, '');
   const panels = {
+    l2tp: {
+      tab: '🔐 L2TP 原生',
+      title: 'L2TP/IPsec（系统原生 · 无需第三方客户端）',
+      steps: [
+        `VPNGate 节点由 SoftEther 驱动，普遍开放 <b>L2TP/IPsec</b>：服务器 <b>${ip}</b>，PSK <b>vpn</b>，账密 <b>vpn / vpn</b>。`,
+        `<b>iOS</b>：设置 → 通用 → VPN 与设备管理 → 添加 VPN → 类型选 <b>L2TP/IPSec</b> → 填上述参数 → 连接。`,
+        `<b>Android</b>：设置 → 网络与互联网 → VPN → 添加 → 类型选 <b>L2TP/IPSec PSK</b> → 填参数 → 连接（部分新系统已移除 L2TP 选项）。`,
+        `<b>macOS</b>：系统设置 → 网络 → VPN → 添加 → 类型 <b>L2TP over IPsec</b> → 填参数 → 连接。`,
+        `部分节点可能未启用 L2TP，连接失败时换 OpenVPN 方式或换节点。`,
+      ],
+      cmd: `Add-VpnConnection -Name "${label}" -ServerAddress ${ip} -TunnelType L2tp -L2tpPsk "vpn" -AuthenticationMethod PAP -EncryptionLevel Optional -Force -RememberCredential`,
+      cmdLabel: '复制 Windows 创建命令',
+      altCmd: `rasdial "${label}" vpn vpn`,
+      altCmdLabel: '复制 Windows 连接命令',
+      extraCmd: `sudo apt install network-manager-l2tp && nmcli connection add type l2tp con-name "${label}" l2tp.gateway ${ip} l2tp.username vpn l2tp.password vpn ipsec.psk vpn ipsec.enable yes && nmcli connection up "${label}"`,
+      extraCmdLabel: '复制 Linux 原生创建命令',
+    },
     mobile: {
       tab: '📱 iOS / Android',
       title: 'iOS / Android（OpenVPN Connect）',
@@ -569,7 +596,7 @@ function pfPanelHtml(platform, url, label) {
         `<b>①</b> 点击下方「下载配置」保存 .ovpn，或在手机浏览器打开「复制链接」；`,
         `<b>②</b> 在「文件/下载」中点击该 .ovpn，选择「用 OpenVPN Connect 打开」；`,
         `<b>③</b> 首次导入点击「信任」，连接时账密输入 <b>vpn / vpn</b>。`,
-        `需先安装 OpenVPN Connect（App Store / Google Play 免费）。系统级 VPN（IPSec/IKEv2）不支持 OpenVPN 协议，此为官方一键导入。`,
+        `也可用「🔐 L2TP 原生」标签页的系统原生方式（如系统支持）。`,
       ],
       cmd: url,
       cmdLabel: '复制配置链接',
@@ -581,7 +608,7 @@ function pfPanelHtml(platform, url, label) {
         `<b>①</b> 在 PowerShell 中运行下方命令（自动下载并打开导入）；`,
         `<b>②</b> 已安装并关联 .ovpn 时自动弹出导入窗口，点击导入即可；`,
         `<b>③</b> 连接时账密输入 <b>vpn / vpn</b>。`,
-        `Windows 系统自带 VPN（IKEv2/SSTP）不支持 OpenVPN 协议，OpenVPN GUI 即官方原生客户端。`,
+        `更推荐「🔐 L2TP 原生」标签页：Windows 内置 VPN 支持，一条命令创建。`,
       ],
       cmd: `curl.exe -L -o "%TEMP%\\${label}.ovpn" "${url}" && start "" "%TEMP%\\${label}.ovpn"`,
       cmdLabel: '复制 PowerShell 命令',
@@ -592,7 +619,8 @@ function pfPanelHtml(platform, url, label) {
       steps: [
         `<b>①</b> 在终端运行下方命令（自动下载并打开导入）；`,
         `<b>②</b> 已安装 Tunnelblick 或 OpenVPN Connect 时自动完成导入；`,
-        `<b>③</b> 连接时账密输入 <b>vpn / vpn</b>。未安装请先装 Tunnelblick。`,
+        `<b>③</b> 连接时账密输入 <b>vpn / vpn</b>。`,
+        `更推荐「🔐 L2TP 原生」标签页：系统设置 → 网络 → VPN → L2TP over IPsec。`,
       ],
       cmd: `curl -L -o ~/Downloads/${label}.ovpn "${url}" && open ~/Downloads/${label}.ovpn`,
       cmdLabel: '复制终端命令',
@@ -601,7 +629,7 @@ function pfPanelHtml(platform, url, label) {
       tab: '🐧 Linux',
       title: 'Linux（NetworkManager 原生创建 / openvpn CLI）',
       steps: [
-        `<b>①</b> 原生创建（推荐）：运行下方第一条命令，用 NetworkManager 导入为系统 VPN 连接（需已装 <b>network-manager-openvpn</b> 插件）；`,
+        `<b>①</b> 原生创建（推荐）：L2TP 用「🔐 L2TP 原生」标签页命令（network-manager-l2tp），或 OpenVPN 用下方 nmcli 导入；`,
         `<b>②</b> 连接：<b>nmcli connection up ${label}</b>；断开：<b>nmcli connection down ${label}</b>；`,
         `<b>③</b> 无桌面环境时用第二条命令（openvpn CLI）连接，账密输入 <b>vpn / vpn</b>，Ctrl+C 断开。`,
       ],
@@ -611,7 +639,7 @@ function pfPanelHtml(platform, url, label) {
       altCmdLabel: '复制 CLI 连接命令',
     },
   };
-  const key = platform === 'windows' ? 'windows' : platform === 'macos' ? 'macos' : platform === 'linux' ? 'linux' : 'mobile';
+  const key = platform && panels[platform] ? platform : 'l2tp';
   const p = panels[key];
   const tabHtml = Object.values(panels).map((x, i) =>
     `<button class="pf-tab ${x === p ? 'active' : ''}" data-pf-tab="${Object.keys(panels)[i]}">${x.tab}</button>`).join('');
@@ -624,6 +652,7 @@ function pfPanelHtml(platform, url, label) {
         ${k === 'mobile' ? `<button class="btn" data-pf-copy="${esc(url)}">复制链接</button>` : ''}
         <button class="btn" data-pf-copy="${esc(x.cmd)}">${x.cmdLabel}</button>
         ${x.altCmd ? `<button class="btn" data-pf-copy="${esc(x.altCmd)}">${x.altCmdLabel}</button>` : ''}
+        ${x.extraCmd ? `<button class="btn" data-pf-copy="${esc(x.extraCmd)}">${x.extraCmdLabel}</button>` : ''}
       </div>
       <div class="pf-cmd">
         <div class="code-box">${esc(x.cmd)}</div>
@@ -633,10 +662,15 @@ function pfPanelHtml(platform, url, label) {
         <div class="code-box">${esc(x.altCmd)}</div>
         <button class="btn btn-sm" data-pf-copy="${esc(x.altCmd)}">复制</button>
       </div>` : ''}
+      ${x.extraCmd ? `<div class="pf-cmd" style="margin-top:8px">
+        <div class="code-box">${esc(x.extraCmd)}</div>
+        <button class="btn btn-sm" data-pf-copy="${esc(x.extraCmd)}">复制</button>
+      </div>` : ''}
     </div>`).join('');
 
-  return `<div class="lc-hint">说明：VPNGate 节点仅提供 <b>OpenVPN</b> 协议。iOS/Android 系统级 VPN（IPSec/IKEv2/WireGuard）不支持该协议，
-    需经官方 OpenVPN Connect 一键导入（系统限制）；Linux 支持 NetworkManager <b>原生创建</b> VPN 连接；Windows/macOS 用官方客户端一键导入。</div>
+  return `<div class="lc-hint">VPNGate 节点（SoftEther）同时开放 <b>OpenVPN</b> 与 <b>L2TP/IPsec</b>：
+    「🔐 L2TP 原生」用系统内置 VPN 直接创建（iOS/Android/Windows/macOS/Linux 均原生支持，免客户端）；
+    OpenVPN 方式无需系统 VPN 限制但需官方客户端。账密统一 <b>vpn / vpn</b>。</div>
     <div class="pf-tabs">${tabHtml}</div>${panelHtml}`;
 }
 
@@ -1023,6 +1057,7 @@ function bindEvents() {
       if (s) openLcModal([lcTargetFromServer(s)]);
     }
     if (act === 'pf') openPlatformModal(id);
+    if (act === 'l2tp-copy') copyText(btn.dataset.text, 'L2TP 参数已复制');
   });
 
   // 配置保存/重置
