@@ -270,7 +270,8 @@ function openDrawer(id) {
       <button class="btn" data-act="probe" data-id="${esc(s.id)}">CF 探测</button>
       <button class="btn" data-act="lc" data-id="${esc(s.id)}">本机校验</button>
       <button class="btn btn-primary" data-act="ovpn" data-id="${esc(s.id)}">下载 .ovpn</button>
-      <button class="btn" data-act="node" data-id="${esc(s.id)}">获取节点参数</button>
+      <button class="btn" data-act="pf" data-id="${esc(s.id)}">多端一键</button>
+      <button class="btn" data-act="node" data-id="${esc(s.id)}">节点参数</button>
     </div>
     <div id="probeResult"></div>
     <div id="nodeResult"></div>`;
@@ -391,8 +392,9 @@ async function runOptimize() {
           <div class="opt-meta">
             <div class="rtt">${r.reachable ? r.rttMs + 'ms' : '不可达'}</div>
             <div style="margin-top:4px;display:flex;gap:6px;justify-content:flex-end">
-              <button class="btn" data-act="opt-lc" data-id="${esc(r.id)}">本机校验</button>
-              <button class="btn" data-act="opt-ovpn" data-id="${esc(r.id)}">下载配置</button>
+              <button class="btn btn-sm" data-act="opt-lc" data-id="${esc(r.id)}">本机校验</button>
+              <button class="btn btn-sm" data-act="opt-pf" data-id="${esc(r.id)}">多端</button>
+              <button class="btn btn-sm" data-act="opt-ovpn" data-id="${esc(r.id)}">下载配置</button>
             </div>
           </div>
         </div>`;
@@ -402,6 +404,9 @@ async function runOptimize() {
     // 绑定下载与本机校验
     document.querySelectorAll('[data-act="opt-ovpn"]').forEach((btn) => {
       btn.addEventListener('click', () => downloadOvpn(btn.dataset.id));
+    });
+    document.querySelectorAll('[data-act="opt-pf"]').forEach((btn) => {
+      btn.addEventListener('click', () => openPlatformModal(btn.dataset.id));
     });
     document.querySelectorAll('[data-act="opt-lc"]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -531,6 +536,109 @@ async function resetConfigForm() {
   } catch (e) {
     toast(`恢复失败：${e.message}`, 'err');
   }
+}
+
+// ==================== 多端一键使用 ====================
+/**
+ * 为单个节点生成“多端一键使用”面板：
+ *  - iOS/Android：移动端文件关联一步打开（OpenVPN Connect）；
+ *  - Windows/macOS/Linux：下载 + 一条命令完成导入/连接（需安装对应 OpenVPN 客户端）。
+ */
+
+function ovpnUrl(id) {
+  return `/api/ovpn?id=${encodeURIComponent(id)}`;
+}
+
+/** 复制文本到剪贴板 */
+async function copyText(text, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(okMsg || '已复制', 'ok');
+  } catch {
+    toast('复制失败，请手动复制', 'err');
+  }
+}
+
+/** 平台面板模板（url: 配置下载地址，label: 文件名） */
+function pfPanelHtml(platform, url, label) {
+  const panels = {
+    mobile: {
+      tab: '📱 iOS / Android',
+      title: 'iOS / Android（OpenVPN Connect）',
+      steps: [
+        `<b>①</b> 点击下方「下载配置」，保存 .ovpn 文件；`,
+        `<b>②</b> 在「文件/下载」中点击该文件，选择「用 OpenVPN Connect 打开」；`,
+        `<b>③</b> 首次导入点击「信任」，连接时账密输入 <b>vpn / vpn</b>。`,
+        `需先安装 OpenVPN Connect（App Store / Google Play 免费）。`,
+      ],
+      cmd: url,
+      cmdLabel: '复制下载链接',
+    },
+    windows: {
+      tab: '🪟 Windows',
+      title: 'Windows（OpenVPN GUI / Connect）',
+      steps: [
+        `<b>①</b> 在 PowerShell 中运行下方命令（自动下载并打开导入）；`,
+        `<b>②</b> OpenVPN GUI 已安装并关联 .ovpn 时会自动弹出导入窗口，点击导入；`,
+        `<b>③</b> 连接时账密输入 <b>vpn / vpn</b>。未安装请先装 OpenVPN Connect。`,
+      ],
+      cmd: `curl.exe -L -o "%TEMP%\\${label}.ovpn" "${url}" && start "" "%TEMP%\\${label}.ovpn"`,
+      cmdLabel: '复制 PowerShell 命令',
+    },
+    macos: {
+      tab: '🍎 macOS',
+      title: 'macOS（Tunnelblick / OpenVPN Connect）',
+      steps: [
+        `<b>①</b> 在终端运行下方命令（自动下载并打开导入）；`,
+        `<b>②</b> 已安装 Tunnelblick 或 OpenVPN Connect 时自动完成导入；`,
+        `<b>③</b> 连接时账密输入 <b>vpn / vpn</b>。未安装请先装 Tunnelblick。`,
+      ],
+      cmd: `curl -L -o ~/Downloads/${label}.ovpn "${url}" && open ~/Downloads/${label}.ovpn`,
+      cmdLabel: '复制终端命令',
+    },
+    linux: {
+      tab: '🐧 Linux',
+      title: 'Linux（openvpn 命令行）',
+      steps: [
+        `<b>①</b> 在终端运行下方命令（自动下载并用 openvpn 连接）；`,
+        `<b>②</b> 提示输入 sudo 密码；连接成功后终端保持运行；`,
+        `<b>③</b> 账密按提示输入 <b>vpn / vpn</b>，按 <b>Ctrl+C</b> 断开。`,
+        `需已安装 openvpn：sudo apt install openvpn（Debian/Ubuntu）。`,
+      ],
+      cmd: `curl -L -o ~/${label}.ovpn "${url}" && sudo openvpn --config ~/${label}.ovpn`,
+      cmdLabel: '复制终端命令',
+    },
+  };
+  const key = platform === 'windows' ? 'windows' : platform === 'macos' ? 'macos' : platform === 'linux' ? 'linux' : 'mobile';
+  const p = panels[key];
+  const tabHtml = Object.values(panels).map((x, i) =>
+    `<button class="pf-tab ${x === p ? 'active' : ''}" data-pf-tab="${Object.keys(panels)[i]}">${x.tab}</button>`).join('');
+  const panelHtml = Object.entries(panels).map(([k, x]) => `
+    <div class="pf-panel ${k === key ? 'active' : ''}" data-pf-panel="${k}">
+      <div class="section-title">${x.title}</div>
+      <ol class="steps">${x.steps.map((s) => `<li>${s}</li>`).join('')}</ol>
+      <div class="row-actions" style="margin-top:0">
+        <a class="btn btn-primary" href="${esc(x.cmd === url ? x.cmd : url)}" download="${k === 'mobile' ? esc(label + '.ovpn') : ''}">下载配置</a>
+        <button class="btn" data-pf-copy="${esc(x.cmd)}">${x.cmdLabel}</button>
+      </div>
+      <div class="pf-cmd">
+        <div class="code-box">${esc(x.cmd)}</div>
+        <button class="btn btn-sm" data-pf-copy="${esc(x.cmd)}">复制</button>
+      </div>
+    </div>`).join('');
+
+  return `<div class="pf-tabs">${tabHtml}</div>${panelHtml}`;
+}
+
+function openPlatformModal(id) {
+  const s = state.servers.find((x) => x.id === id) || {};
+  const url = ovpnUrl(id);
+  const label = `vpngate-${s.countryShort || 'x'}-${s.ip || 'node'}`;
+  const body = document.getElementById('pfBody');
+  body.innerHTML = `
+    <div class="section-title">节点 ${esc(s.ip || id)}${s.countryShort ? ` · ${esc(s.countryShort)}` : ''}</div>
+    ${pfPanelHtml('', url, label)}`;
+  document.getElementById('pfMask').hidden = false;
 }
 
 // ==================== 本机连通性校验 ====================
@@ -857,10 +965,26 @@ function bindEvents() {
   document.getElementById('btnCloseLc').addEventListener('click', () => {
     document.getElementById('lcMask').hidden = true;
   });
+  document.getElementById('btnClosePf').addEventListener('click', () => {
+    document.getElementById('pfMask').hidden = true;
+  });
   document.querySelectorAll('.modal-mask').forEach((mask) => {
     mask.addEventListener('click', (e) => {
       if (e.target === mask) mask.hidden = true;
     });
+  });
+
+  // 多端一键面板：切换平台 / 复制命令
+  document.getElementById('pfBody').addEventListener('click', (e) => {
+    const tab = e.target.closest('[data-pf-tab]');
+    if (tab) {
+      const key = tab.dataset.pfTab;
+      document.querySelectorAll('[data-pf-tab]').forEach((t) => t.classList.toggle('active', t.dataset.pfTab === key));
+      document.querySelectorAll('[data-pf-panel]').forEach((p) => p.classList.toggle('active', p.dataset.pfPanel === key));
+      return;
+    }
+    const cp = e.target.closest('[data-pf-copy]');
+    if (cp) copyText(cp.dataset.pfCopy, '已复制，可在本机终端运行');
   });
 
   // 本机校验面板操作
@@ -888,6 +1012,7 @@ function bindEvents() {
       const s = state.servers.find((x) => x.id === id);
       if (s) openLcModal([lcTargetFromServer(s)]);
     }
+    if (act === 'pf') openPlatformModal(id);
   });
 
   // 配置保存/重置
