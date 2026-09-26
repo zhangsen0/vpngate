@@ -34,7 +34,7 @@ jobs:
 
       - name: 写入生产绑定配置（KV 绑定；部署时 wrangler 按此同步项目级绑定）
         run: |
-          cat > wrangler.toml <<'EOF'
+          cat > wrangler.toml <<EOF
           name = "vpngate"
           compatibility_date = "2025-09-01"
           pages_build_output_dir = "dist"
