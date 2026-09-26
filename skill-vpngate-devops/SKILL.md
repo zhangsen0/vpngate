@@ -70,6 +70,9 @@ e2e 通过 = 用户使用级测试 + 全部接口测试（登录/登出/配置�
 
 - **Pages 直传 API 是两步流程**：先 POST `/pages/assets/upload`（JWT 认证）传文件，再 POST `/deployments` 带 manifest+`_worker.bundle`。旧的「manifest+文件一次性 multipart」会被静默接受但文件不挂载（部署记录 file_hash_list 为空、页面全 404）——直接用 wrangler 部署即可规避。
 - **cloudflare:sockets 新版 API**：`connect({hostname,port})` 返回 Socket，用 `socket.opened`（Promise）/`socket.closed`（Promise）判断连通；旧式 `addEventListener('opened')` 会报 `socket.addEventListener is not a function`，导致所有节点探测全 false。
+- **优选探测挂死（重点）**：cloudflare:sockets 走边缘 egress proxy，**并发 connect 会被限流挂起**，且不可达 IP 时 `socket.opened` reject——`.then()` 未挂 catch 会产生 unhandled rejection 使 isolate 报 `internal call error`；即使挂 catch，多节点并发也常超过平台 30s 墙钟。**对策**：opened/closed 全部挂 catch；`runOptimize` 用**整体预算**（默认 15s，`Promise.race([全部探测, 预算timer])`，超时未完成节点标记不可达返回部分结果）；前端优选请求 AbortController 25s 兜底；默认 `probeCount=10`。probeCount 越大越慢（egress 限流），用户可在配置面板改。探测到标准 HTTP 服务端口（如 1.1.1.1:443）会被 egress 拒绝（`proxy request failed...consider using fetch`），属正常——VPNGate 节点的 443/1194 是 OpenVPN/L2TP 非 HTTP，可正常探测。
+- **CSS `[hidden]` 陷阱**：`.modal-mask{display:flex}` 会覆盖 HTML `hidden` 属性（作者样式优先级高于 UA 的 `[hidden]{display:none}`），导致**页面加载即所有弹窗全显示**（用户"进去啥也看不到"）。必须加全局 `[hidden]{display:none!important}`。
+- **前端事件绑定引用未定义函数会中断整个 bindEvents**：如 `btnLogs` 绑定 `openLogs` 但函数缺失 → 后续所有交互（搜索/筛选/退出/保存）全部失效。前端改动后必须用浏览器实际点击验证（API e2e 覆盖不到 UI）。
 - **Pages 平台会把 `/login.html` 自动 308 到 `/login`**（去扩展名）；中间件必须同时放行 `/login`，否则登录页 308→/login→302→/login.html 死循环。
 - **normalizeServers 必须保留 `configBase64`**（列表接口由路由裁剪）；裁掉会导致所有 .ovpn 404「缺少 OpenVPN 配置数据」。
 - **自定义域名绑定用 POST** `/pages/projects/{p}/domains`（body `{"name":...}`）；PUT 会 405。

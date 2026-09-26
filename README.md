@@ -93,8 +93,8 @@ APP_PASSWORD=admin123
 | 筛选 | minUptimeHours / minSpeedMbps / maxPingMs / hostRegex | 在线时长、速度、延迟、主机名白名单 |
 | 评分权重 | score / ping / speed / uptime / freeSessions | 各指标权重（0~10） |
 | 归一化参考 | scoreRef / pingTargetMs / speedTargetBps / uptimeRefHours / sessionsTarget | 各指标归一化基准 |
-| 连通性探测 | ports / timeoutMs / probeCount / concurrency / requireReachable / reachableBoost | 探测参数与加成 |
-| 优选结果 | topN / cacheSeconds | 返回条数 / 优选结果缓存时长（0 关闭） |
+| 连通性探测 | ports / timeoutMs / probeCount / concurrency / requireReachable / reachableBoost | 探测参数与加成（整体探测预算 15s，超时节点标记不可达，保证平台 30s 墙钟内返回） |
+| 优选结果 | topN / cacheSeconds | 返回条数 / 优选结果缓存时长（0 关闭；`POST /api/optimize` 支持 body 覆盖 country/topN/requireReachable/probeCount） |
 | 节点配置 | rewriteRemoteToIp / appendOptions | remote 改写为优选 IP、附加 OpenVPN 选项 |
 | 界面 | theme / defaultSort | 主题与默认排序 |
 
