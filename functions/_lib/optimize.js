@@ -64,7 +64,7 @@ export function scoreServer(s, config) {
  * @param {number} [budgetMs] - 整体探测时间预算（默认 20000，平台 30s 墙钟内兜底）
  * @returns {Promise<{ranked: Array, probed: Array}>}
  */
-export async function runOptimize(servers, config, probeFn = probeServer, budgetMs = 20000) {
+export async function runOptimize(servers, config, probeFn = probeServer, budgetMs = 15000) {
   const filtered = applyFilters(servers, config);
 
   // 静态评分排序，取前 probeCount 名探测

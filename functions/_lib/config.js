@@ -80,9 +80,9 @@ export const DEFAULTS = {
     /** 单次探测超时(ms) */
     timeoutMs: 2000,
     /** 静态评分前 N 名进入连通性探测 */
-    probeCount: 12,
+    probeCount: 10,
     /** 探测并发数 */
-    concurrency: 15,
+    concurrency: 20,
     /** 优选结果是否仅保留可连通的节点 */
     requireReachable: true,
     /** 可连通节点评分加成（比例，0~1，加到总分上） */
