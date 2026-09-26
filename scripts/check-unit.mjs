@@ -101,11 +101,11 @@ test('parseJson：auto-ovpn 格式解析，字段映射正确', () => {
   assert.equal(s.uptimeHours, 48, '172800000ms = 48h');
 });
 
-test('normalizeServers：过滤非法 IP 并生成 id', () => {
+test('normalizeServers：过滤非法 IP 并生成 id，保留 configBase64', () => {
   const servers = normalizeServers(parseJson(sampleJson()));
   assert.equal(servers.length, 1);
   assert.equal(servers[0].id, 'public-vpn-3|3.3.3.3');
-  assert.ok(!('configBase64' in servers[0]), '轻量对象不应包含 base64');
+  assert.ok(servers[0].configBase64 && servers[0].configBase64.length > 0, '应保留 configBase64 供生成配置');
 });
 
 // ==================== 筛选与评分 ====================
