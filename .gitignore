@@ -4,3 +4,4 @@ deploy/
 .wrangler/
 *.zip
 .DS_Store
+.dev.vars

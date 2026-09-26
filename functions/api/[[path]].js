@@ -19,6 +19,7 @@ import { getServers } from '../_lib/sources.js';
 import { runOptimize } from '../_lib/optimize.js';
 import { buildOvpn, nodeParams } from '../_lib/ovpn.js';
 import { probeServer } from '../_lib/probe.js';
+import { issueToken, authCookieHeaders, clearCookieHeaders, safeEqual, isAuthed } from '../_lib/auth.js';
 
 export async function onRequest(context) {
   const { request, env, params } = context;
@@ -43,6 +44,32 @@ export async function onRequest(context) {
 }
 
 async function route(method, path, request, env) {
+  // —— 登录 / 登出 / 会话状态 ——
+  if (method === 'POST' && path === 'auth/login') {
+    const body = await readJson(request);
+    const password = body && typeof body.password === 'string' ? body.password : '';
+    const expected = env && env.APP_PASSWORD;
+    if (!expected) {
+      return json({ ok: false, error: '未配置访问密码（APP_PASSWORD）' }, 500);
+    }
+    if (!safeEqual(password, expected)) {
+      return json({ ok: false, error: '密码错误' }, 401);
+    }
+    const token = await issueToken(env);
+    if (!token) return json({ ok: false, error: '未配置访问密码（APP_PASSWORD）' }, 500);
+    return json({ ok: true }, 200, authCookieHeaders(env, token));
+  }
+
+  if (method === 'POST' && path === 'auth/logout') {
+    return json({ ok: true }, 200, clearCookieHeaders());
+  }
+
+  if (method === 'GET' && path === 'auth/me') {
+    return isAuthed(request, env)
+      ? json({ ok: true, authed: true, user: 'admin' })
+      : json({ ok: true, authed: false });
+  }
+
   // —— 健康检查 ——
   if (method === 'GET' && path === 'health') {
     const { storage } = await loadConfig(env);

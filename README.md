@@ -4,6 +4,7 @@
 
 ## 特性
 
+- **登录保护**：全站需登录访问，访问密码通过 Pages 环境变量 `APP_PASSWORD` 配置（当前为 `admin123`），换密码无需改代码。
 - **实时节点**：从 VPNGate 官方接口 / GitHub 镜像拉取节点列表，数据源可在页面配置、按序回退。
 - **可配置优选**：评分权重、筛选阈值、探测端口、结果条数等全部参数均可在页面修改（存于 Cloudflare KV）。
 - **实测连通**：对静态评分靠前的节点做 TCP 握手探测（Cloudflare 边缘），只推荐真实可达的节点。
@@ -57,6 +58,18 @@ npm run dev          # 本地启动（http://localhost:8787）
 ```
 
 本地开发时配置保存在隔离岛内存中（无 KV 绑定），功能与线上一致。
+本地登录密码：在项目根目录创建 `.dev.vars` 文件（已 gitignore）：
+
+```bash
+APP_PASSWORD=admin123
+```
+
+### 访问控制
+
+- 整个项目（页面 + API）需要登录使用，未登录访问页面自动跳转登录页。
+- 访问密码来自 Pages **环境变量** `APP_PASSWORD`（`secret_text` 类型），部署脚本自动注入；当前默认值为 `admin123`。
+- 修改密码：CF 控制台 → Workers & Pages → 项目 → 设置 → 环境变量 → 更新 `APP_PASSWORD`（或使用 `scripts/deploy-test.sh` 的 `APP_PASSWORD` 入参重新部署）。
+- 会话有效期默认 7 天，可用环境变量 `SESSION_TTL_DAYS` 调整。
 
 ### 配置说明
 

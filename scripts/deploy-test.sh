@@ -51,17 +51,31 @@ else
   echo "    KV 已存在：${KV_ID}"
 fi
 
-echo "==> 4/6 绑定 KV 到 Pages 项目（production + preview）"
+echo "==> 4/6 绑定 KV 与环境变量到 Pages 项目（production + preview）"
+# APP_PASSWORD 作为 secret_text 环境变量注入（登录密码配置化；未提供则跳过认证配置）
+ENV_JSON="{}"
+if [ -n "${APP_PASSWORD:-}" ]; then
+  ENV_JSON="{\"APP_PASSWORD\":{\"type\":\"secret_text\",\"value\":\"${APP_PASSWORD}\"}}"
+fi
+BODY=$(python3 - "${KV_ID}" "${ENV_JSON}" <<'PYEOF'
+import json, sys
+kv_id, env = sys.argv[1], json.loads(sys.argv[2])
+body = {"deployment_configs": {"production": {}, "preview": {}}}
+for stage in ("production", "preview"):
+    body["deployment_configs"][stage]["kv_namespaces"] = [{"namespace_id": kv_id, "binding": "VPNGATE_CFG"}]
+    if env:
+        body["deployment_configs"][stage]["env_vars"] = env
+print(json.dumps(body))
+PYEOF
+)
 curl -s "${AUTH[@]}" -X PATCH "${API}/accounts/${CF_ACCOUNT}/pages/projects/${CF_PROJECT}" \
-  -d "{\"deployment_configs\":{\"production\":{\"kv_namespaces\":[{\"namespace_id\":\"${KV_ID}\",\"binding\":\"VPNGATE_CFG\"}]},\"preview\":{\"kv_namespaces\":[{\"namespace_id\":\"${KV_ID}\",\"binding\":\"VPNGATE_CFG\"}]}}}" >/dev/null
-echo "    KV 绑定完成"
+  -d "${BODY}" >/dev/null
+echo "    KV 绑定完成${APP_PASSWORD:+ · APP_PASSWORD 已配置（secret）}${APP_PASSWORD:- · 未配置 APP_PASSWORD}"
 
-echo "==> 5/6 上传部署包（手动直传）"
-DEPLOY=$(curl -s "${AUTH[@]}" -X POST \
-  -F "file=@${ROOT}/dist/deploy.zip" \
-  "${API}/accounts/${CF_ACCOUNT}/pages/projects/${CF_PROJECT}/deployments")
-DEPLOY_URL=$(echo "$DEPLOY" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['result']['url'] if 'result' in d and d['result'] else '')")
-echo "    部署地址：${DEPLOY_URL}"
+echo "==> 5/6 上传部署包（手动直传，manifest 模式）"
+DEPLOY_OUT=$(python3 "${ROOT}/scripts/upload-pages.py" "${CF_ACCOUNT}" "${CF_TOKEN}" "${CF_PROJECT}" "${ROOT}/dist")
+echo "${DEPLOY_OUT}"
+DEPLOY_URL=$(echo "${DEPLOY_OUT}" | grep '^url:' | cut -d' ' -f2-)
 
 echo "==> 6/6 绑定自定义域名 ${CF_DOMAIN}（如未绑定）"
 DOM=$(curl -s "${AUTH[@]}" "${API}/accounts/${CF_ACCOUNT}/pages/projects/${CF_PROJECT}/domains/${CF_DOMAIN}")

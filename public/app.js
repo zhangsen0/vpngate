@@ -27,14 +27,25 @@ const state = {
 
 // ==================== 基础工具 ====================
 
-/** 统一 API 请求 */
+/** 统一 API 请求（401 时跳转登录页） */
 async function api(path, opts = {}) {
   const res = await fetch(path, opts);
   const data = await res.json().catch(() => null);
-  if (!res.ok || (data && data.ok === false)) {
+  if (!res.ok) {
+    if (res.status === 401) {
+      location.href = '/login.html?next=' + encodeURIComponent(location.pathname + location.search);
+      throw new Error('未登录');
+    }
     throw new Error((data && data.error) || `HTTP ${res.status}`);
   }
+  if (data && data.ok === false) throw new Error(data.error || '请求失败');
   return data;
+}
+
+/** 退出登录 */
+async function logout() {
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch { /* 忽略 */ }
+  location.href = '/login.html';
 }
 
 /** 国家两位码 → 国旗 emoji */
@@ -825,6 +836,12 @@ function bindEvents() {
   document.getElementById('serverTbody').addEventListener('click', (e) => {
     const tr = e.target.closest('tr[data-id]');
     if (tr) openDrawer(tr.dataset.id);
+  });
+
+  // 退出登录
+  document.getElementById('btnLogout').addEventListener('click', (e) => {
+    e.preventDefault();
+    logout();
   });
 
   // 抽屉/面板关闭
