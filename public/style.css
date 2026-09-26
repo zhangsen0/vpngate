@@ -3,6 +3,9 @@
    原则：简约（少即是多）· 美观（克制的色彩与留白）· 实用（信息优先）· 可用（清晰的层级与反馈）
    ============================================================ */
 
+/* hidden 属性永远生效：防止 display 样式覆盖（如 .modal-mask{display:flex}）导致弹窗默认全部显示 */
+[hidden] { display: none !important; }
+
 /* ---------- 1. 设计令牌（Design Tokens） ---------- */
 :root {
   /* 深色主题（默认） */
@@ -306,6 +309,23 @@ tbody td { padding: 10px 14px; white-space: nowrap; vertical-align: middle; }
 .modal-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .modal-body { overflow-y: auto; padding-right: 2px; }
 .modal-body .empty { padding: 22px; }
+.modal-body .dim { color: var(--text-dim); padding: 18px 4px; }
+.modal-body .err { color: var(--bad); padding: 18px 4px; }
+
+/* 操作日志列表 */
+.log-list { display: flex; flex-direction: column; gap: 8px; }
+.log-item {
+  display: grid; grid-template-columns: 118px 92px 1fr;
+  gap: 10px; align-items: baseline;
+  padding: 9px 11px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 13px;
+}
+.log-item .log-time { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.log-item .log-act { color: var(--accent); font-weight: 600; white-space: nowrap; }
+.log-item .log-ip { color: var(--text-faint); font-family: var(--mono, monospace); font-size: 12px; text-align: right; }
+.log-item .log-detail { grid-column: 1 / -1; color: var(--text-dim); font-size: 12px; word-break: break-all; }
 
 /* 优选卡片 */
 .opt-list { display: flex; flex-direction: column; gap: 9px; }

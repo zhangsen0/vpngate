@@ -1013,6 +1013,51 @@ $('out').value=lines;navigator.clipboard.writeText(lines).then(function(){alert(
   toast('探测页已下载：python3 -m http.server 8000 后 http 打开', 'ok');
 }
 
+// ==================== 操作日志 ====================
+
+const LOG_ACT_LABEL = {
+  login: '登录成功', 'login-fail': '登录失败', logout: '登出',
+  'config-save': '保存配置', 'config-reset': '恢复默认配置',
+  'storage-switch': '切换存储模式', 'storage-sync': '同步存储',
+  'servers-refresh': '强制刷新节点', optimize: '执行优选',
+  'ovpn-download': '下载 .ovpn', 'node-view': '查看节点',
+};
+
+/** 格式化日志时间 */
+function fmtLogTime(t) {
+  if (!t) return '-';
+  const d = new Date(t);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/** 打开操作日志弹窗并加载日志 */
+async function openLogs() {
+  const mask = document.getElementById('logMask');
+  const body = document.getElementById('logBody');
+  mask.hidden = false;
+  body.innerHTML = '<div class="dim">加载中…</div>';
+  try {
+    const data = await api('/api/logs?limit=50');
+    const logs = data.logs || [];
+    if (!logs.length) {
+      body.innerHTML = '<div class="dim">暂无操作日志</div>';
+      return;
+    }
+    body.innerHTML = '<div class="log-list">' + logs.map((l) => {
+      const label = LOG_ACT_LABEL[l.act] || l.act || '-';
+      return `<div class="log-item">
+        <span class="log-time">${esc(fmtLogTime(l.t))}</span>
+        <span class="log-act">${esc(label)}</span>
+        <span class="log-ip">${esc(l.ip || '')}</span>
+        ${l.d ? `<span class="log-detail">${esc(l.d)}</span>` : ''}
+      </div>`;
+    }).join('') + '</div>';
+  } catch (e) {
+    body.innerHTML = `<div class="err">加载日志失败：${esc(e.message)}</div>`;
+  }
+}
+
 // ==================== 事件绑定 ====================
 
 function bindEvents() {
