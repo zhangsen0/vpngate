@@ -75,6 +75,7 @@ e2e 通过 = 用户使用级测试 + 全部接口测试（登录/登出/配置�
 - **前端事件绑定引用未定义函数会中断整个 bindEvents**：如 `btnLogs` 绑定 `openLogs` 但函数缺失 → 后续所有交互（搜索/筛选/退出/保存）全部失效。前端改动后必须用浏览器实际点击验证（API e2e 覆盖不到 UI）。
 - **官方源（www.vpngate.net）国内不可达的真相是 DNS 污染**：`getent hosts www.vpngate.net` 返回 Facebook IPv6（`2a03:2880:...:face:b00c:...`）——解析被劫持到错误 IP。DoH 查真实 IP（华为 1.12.12.12 可达，返回 130.158.75.44/48），真实 IP 直连也被封锁。**正确姿势**：让 CF 边缘（Pages Functions）直连域名——CF 自带干净 DNS，再配合：① 浏览器 UA（官方源对非浏览器 UA 可能拒绝）② 失败重试（官方瞬时 504/超时自动重试）③ fetch.dnsResolver='google' 可经 Google DoH 解析真实 IP（注：https 源受 TLS SNI 限制，IP 直连会证书不匹配，此选项实际依赖 CF 干净 DNS，保留为配置项）。修复后官方源在测试+生产均实测 ✅ 97 节点。
 - **VPNGate 官方 CSV 格式**：首行是 `*vpn_servers`（版本标记），第二行才是 `#HostName,IP,...,OpenVPN_ConfigData_Base64` 表头，底部还有 `*` 版权行。parseCsv 必须**优先找 `#` 开头行作表头**、循环跳过 `*`/`#`/表头行本身；取 `lines[0]` 作表头会报"表头不匹配"（此前官方源网络失败掩盖了此解析 bug）。GitHub CSV 镜像（Vepashka94 等）同格式。
+- **全站登录保护下，外部客户端无法直接下载受保护资源**：OpenVPN Connect 等客户端导入 URL 时无登录 Cookie，中间件对 `/api/*` 返回 401 JSON → 客户端报 "Incorrect response from server"（"服务器响应不正确"）。**对策**：给下载链接签发免登录短期令牌——`signFileToken`（HMAC(APP_PASSWORD) 签名 payload `{id, e}`），`_middleware` 对 `/api/ovpn` 携带有效令牌放行；前端打开多端面板时先 `GET /api/ovpn-url?id=...` 拿带令牌链接再渲染（下载按钮/复制链接/各端 curl 命令全部带令牌）。令牌绑定 id + 过期时间（`ovpn.linkTokenTtlSeconds` 可配），伪造/过期一律 401。令牌与 Cookie 会话并存，登录会话不受影响。
 - **Pages 平台会把 `/login.html` 自动 308 到 `/login`**（去扩展名）；中间件必须同时放行 `/login`，否则登录页 308→/login→302→/login.html 死循环。
 - **normalizeServers 必须保留 `configBase64`**（列表接口由路由裁剪）；裁掉会导致所有 .ovpn 404「缺少 OpenVPN 配置数据」。
 - **自定义域名绑定用 POST** `/pages/projects/{p}/domains`（body `{"name":...}`）；PUT 会 405。
