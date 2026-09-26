@@ -1,0 +1,43 @@
+# ============================================================
+# 生产环境自动部署：Cloudflare Pages
+# 触发：push 到 main（或手动触发）
+# 前置：仓库 Secrets 需配置
+#   CF_API_TOKEN  = 生产环境 API 令牌
+#   CF_ACCOUNT_ID = 生产环境账户 ID
+# 项目：vpngate（Pages 项目名，域名 vpngate.520215.xyz）
+# ============================================================
+name: Deploy to Cloudflare Pages (production)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 zip
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: 组装部署包
+        run: |
+          node scripts/package.mjs dist
+
+      - name: 部署到 Cloudflare Pages（生产）
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          projectName: vpngate
+          directory: dist
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          wranglerVersion: '4'

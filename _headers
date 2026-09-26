@@ -1,0 +1,5 @@
+# 静态资源安全响应头（Cloudflare Pages 自动应用）
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY

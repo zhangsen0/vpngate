@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="VPNGate 节点优选：拉取实时节点，可配置权重与探测参数，一键优选并生成可用 OpenVPN 节点配置" />
+  <title>VPNGate 优选</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body data-theme="dark">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">VPNGate<span class="logo-sub">优选</span></span>
+      <span class="status" id="statusText">加载中…</span>
+    </div>
+    <div class="actions">
+      <button class="btn" id="btnRefresh" title="强制从数据源重新拉取列表">刷新列表</button>
+      <button class="btn btn-primary" id="btnOptimize">⚡ 立即优选</button>
+      <button class="btn" id="btnConfig">⚙ 配置</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="toolbar">
+      <input type="search" id="searchInput" placeholder="搜索 IP / 主机名 / 运营商…" autocomplete="off" />
+      <select id="countrySelect" title="按国家筛选">
+        <option value="">全部国家</option>
+      </select>
+      <select id="sortSelect" title="排序方式"></select>
+      <label class="check">
+        <input type="checkbox" id="reachableOnly" /> 仅可连通
+      </label>
+      <span class="meta" id="metaText"></span>
+    </section>
+
+    <section class="table-wrap">
+      <table id="serverTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>国家</th>
+            <th>IP / 主机名</th>
+            <th class="num">Ping</th>
+            <th class="num">速度</th>
+            <th class="num">评分</th>
+            <th class="num">在线</th>
+            <th class="num">会话</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="serverTbody"></tbody>
+      </table>
+      <div class="empty" id="emptyText" hidden>暂无数据，点击「刷新列表」获取 VPNGate 节点</div>
+    </section>
+  </main>
+
+  <!-- 节点详情抽屉 -->
+  <aside class="drawer" id="drawer" hidden>
+    <div class="drawer-head">
+      <span>节点详情</span>
+      <button class="btn-close" id="btnCloseDrawer" title="关闭">×</button>
+    </div>
+    <div id="drawerBody"></div>
+  </aside>
+
+  <!-- 优选结果面板 -->
+  <div class="modal-mask" id="optMask" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <span>优选结果</span>
+        <button class="btn-close" id="btnCloseOpt" title="关闭">×</button>
+      </div>
+      <div class="modal-body" id="optBody"></div>
+    </div>
+  </div>
+
+  <!-- 配置面板 -->
+  <div class="modal-mask" id="cfgMask" hidden>
+    <div class="modal modal-wide">
+      <div class="modal-head">
+        <span>参数配置</span>
+        <div class="modal-actions">
+          <button class="btn" id="btnResetCfg">恢复默认</button>
+          <button class="btn btn-primary" id="btnSaveCfg">保存</button>
+          <button class="btn-close" id="btnCloseCfg" title="关闭">×</button>
+        </div>
+      </div>
+      <div class="modal-body" id="cfgBody"></div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span id="footText"></span> · <a href="https://github.com/zhangsen0/vpngate" target="_blank" rel="noopener">源码</a>
+  </footer>
+
+  <div class="toast" id="toast" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>

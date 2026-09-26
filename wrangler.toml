@@ -1,0 +1,10 @@
+# 本地开发配置（wrangler pages dev 使用）
+# 远程部署时，Pages 的 KV 绑定通过 CF 控制台/API 配置（见 README 部署章节）
+name = "vpngate"
+compatibility_date = "2025-09-01"
+pages_build_output_dir = "public"
+
+# 本地开发 KV 绑定（占位；远程绑定名必须一致：VPNGATE_CFG）
+[[kv_namespaces]]
+binding = "VPNGATE_CFG"
+id = "00000000000000000000000000000000"

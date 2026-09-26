@@ -1,0 +1,15 @@
+{
+  "name": "vpngate",
+  "version": "1.0.0",
+  "description": "VPNGate 节点优选与节点配置生成工具（Cloudflare Pages + Functions）",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "check": "node scripts/check-syntax.mjs && node scripts/check-unit.mjs",
+    "dev": "wrangler pages dev public --port 8787",
+    "package": "node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
