@@ -67,7 +67,7 @@ export async function fetchSource(source, fetchOpts = {}) {
       const res = await fetch(target, { headers, redirect: 'follow' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
-      if (!text || text.length < 100) throw new Error('响应体过小，疑似不可用');
+      if (!text || text.length < 100) throw new Error(`响应体过小(${text.length}B)：${text.slice(0, 120)}`);
       return text;
     } catch (e) {
       lastErr = e;
@@ -90,7 +90,7 @@ export function parseCsv(text) {
     iSpeed = idx('Speed'), iCountryLong = idx('CountryLong'), iCountryShort = idx('CountryShort'),
     iSessions = idx('NumVpnSessions'), iUptime = idx('Uptime'), iLog = idx('LogType'),
     iOperator = idx('Operator'), iB64 = idx('OpenVPN_ConfigData_Base64');
-  if (iHost < 0 || iIp < 0 || iB64 < 0) throw new Error('CSV 表头不匹配，非 VPNGate 格式');
+  if (iHost < 0 || iIp < 0 || iB64 < 0) throw new Error(`CSV 表头不匹配，非 VPNGate 格式：${text.slice(0, 160)}`);
 
   const servers = [];
   for (const line of lines.slice(1)) {
