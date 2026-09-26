@@ -17,6 +17,36 @@ function signingKey(env) {
   return (env && (env.APP_PASSWORD || '')) || '';
 }
 
+// ==================== 免登录文件链接令牌（短期） ====================
+// 用于 .ovpn 等下载链接：外部客户端（OpenVPN Connect 等）无登录 Cookie，
+// 携带签名令牌即可在有效期内直接下载。令牌绑定 id 与过期时间，防篡改/防重放。
+
+/** 签发文件访问令牌：payload = {id, e}，签名 = HMAC(payload) */
+export async function signFileToken(env, id, ttlMs) {
+  const key = signingKey(env);
+  if (!key || !id) return null;
+  const payload = b64urlEncode(JSON.stringify({ id, e: Date.now() + ttlMs }));
+  const sig = await hmacHex(key, payload);
+  return `${payload}.${sig}`;
+}
+
+/** 校验文件访问令牌：签名有效、未过期、id 匹配 */
+export async function verifyFileToken(env, token, id) {
+  if (!token || !id) return false;
+  const key = signingKey(env);
+  if (!key) return false;
+  const [payload, sig] = token.split('.');
+  if (!payload || !sig) return false;
+  const expected = await hmacHex(key, payload);
+  if (expected !== sig) return false;
+  try {
+    const data = JSON.parse(b64urlDecode(payload));
+    return data.id === id && typeof data.e === 'number' && data.e > Date.now();
+  } catch {
+    return false;
+  }
+}
+
 /** 从请求 Cookie 中取出会话令牌 */
 export function getCookie(request) {
   const header = request.headers.get('Cookie') || '';

@@ -130,6 +130,8 @@ export const DEFAULTS = {
       'auth-nocache',
       'block-outside-dns',
     ],
+    /** 免登录下载链接令牌有效期(秒)：供 OpenVPN Connect 等外部客户端无 Cookie 直接导入 .ovpn */
+    linkTokenTtlSeconds: 600,
   },
   ui: {
     theme: 'dark',
@@ -207,6 +209,8 @@ export const SCHEMA = [
   // —— 节点配置生成 ——
   { key: 'ovpn.rewriteRemoteToIp', group: '节点配置生成', label: 'remote 改写为优选 IP', type: 'boolean' },
   { key: 'ovpn.appendOptions', group: '节点配置生成', label: '附加 OpenVPN 选项(每行一条)', type: 'arrayString' },
+  { key: 'ovpn.linkTokenTtlSeconds', group: '节点配置生成', label: '下载链接令牌有效期(秒)', type: 'int', min: 30, max: 86400, unit: 's',
+    hint: '复制给外部客户端（OpenVPN Connect 等）的免登录链接有效期' },
 
   // —— 界面 ——
   { key: 'ui.theme', group: '界面', label: '主题', type: 'string', options: ['dark', 'light'] },
@@ -297,6 +301,7 @@ export function validateConfig(cfg) {
 
   config.ovpn.rewriteRemoteToIp = boolOf(withDefault('ovpn.rewriteRemoteToIp', true), true);
   config.ovpn.appendOptions = strArrayOf(withDefault('ovpn.appendOptions', []));
+  config.ovpn.linkTokenTtlSeconds = clamp(intOf(withDefault('ovpn.linkTokenTtlSeconds', 600), 600), 30, 86400);
 
   config.ui.theme = ['dark', 'light'].includes(withDefault('ui.theme', 'dark')) ? config.ui.theme : 'dark';
   const sorts = ['score-desc', 'ping-asc', 'speed-desc', 'uptime-desc'];

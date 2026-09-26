@@ -745,11 +745,18 @@ function pfPanelHtml(platform, url, label) {
     <div class="pf-tabs">${tabHtml}</div>${panelHtml}`;
 }
 
-function openPlatformModal(id) {
+async function openPlatformModal(id) {
   const s = state.servers.find((x) => x.id === id) || {};
-  const url = ovpnUrl(id);
   const label = `vpngate-${s.countryShort || 'x'}-${s.ip || 'node'}`;
   const body = document.getElementById('pfBody');
+  // 免登录下载链接（带短期令牌）：外部客户端（OpenVPN Connect 等）无登录 Cookie 也能直接导入
+  let url = '';
+  try {
+    const res = await fetch(`/api/ovpn-url?id=${encodeURIComponent(id)}`);
+    const d = await res.json().catch(() => null);
+    if (res.ok && d && d.url) url = d.url;
+  } catch { /* 令牌接口失败时降级为登录会话内可用的相对路径 */ }
+  if (!url) url = ovpnUrl(id);
   body.innerHTML = `
     <div class="section-title">节点 ${esc(s.ip || id)}${s.countryShort ? ` · ${esc(s.countryShort)}` : ''}</div>
     ${pfPanelHtml('', url, label)}`;

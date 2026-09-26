@@ -8,7 +8,7 @@
  */
 
 import { json } from './_lib/util.js';
-import { isAuthed } from './_lib/auth.js';
+import { isAuthed, verifyFileToken } from './_lib/auth.js';
 
 export async function onRequest(context) {
   const { request, env, next } = context;
@@ -23,6 +23,15 @@ export async function onRequest(context) {
 
   if (isAuthed(request, env)) {
     return next();
+  }
+
+  // 免登录下载链接：/api/ovpn 携带有效短期令牌（外部客户端无 Cookie，如 OpenVPN Connect 导入）
+  if (path === '/api/ovpn') {
+    const token = url.searchParams.get('token') || '';
+    const id = url.searchParams.get('id') || '';
+    if (token && id && (await verifyFileToken(env, token, id))) {
+      return next();
+    }
   }
 
   if (path.startsWith('/api/')) {

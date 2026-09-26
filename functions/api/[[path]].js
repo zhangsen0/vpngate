@@ -25,7 +25,7 @@ import { buildOvpn, nodeParams } from '../_lib/ovpn.js';
 import { probeServer } from '../_lib/probe.js';
 import {
   issueToken, authCookieHeaders, clearCookieHeaders, safeEqual, isAuthed,
-  checkLoginLock, recordLoginFail, clearLoginLock,
+  checkLoginLock, recordLoginFail, clearLoginLock, signFileToken,
 } from '../_lib/auth.js';
 import { log, readLogs, flushPendingLogs } from '../_lib/log.js';
 
@@ -220,6 +220,20 @@ async function route(method, path, request, env) {
       } catch { /* 写缓存失败不影响结果 */ }
     }
     return json({ ok: true, ranked, probed, statuses: result.statuses, updatedAt: result.updatedAt });
+  }
+
+  // —— 免登录下载链接（带短期令牌，供外部客户端如 OpenVPN Connect 直接导入） ——
+  if (method === 'GET' && path === 'ovpn-url') {
+    const q = queryParams(request.url);
+    if (!q.id) return json({ ok: false, error: '缺少 id 参数' }, 400);
+    const { config } = await loadConfig(env);
+    const ttlMs = config.ovpn.linkTokenTtlSeconds * 1000;
+    const token = await signFileToken(env, q.id, ttlMs);
+    if (!token) return json({ ok: false, error: '签名密钥不可用（未配置 APP_PASSWORD）' }, 500);
+    const url = new URL(request.url);
+    const link = `${url.origin}/api/ovpn?id=${encodeURIComponent(q.id)}&token=${encodeURIComponent(token)}`;
+    log(env, 'ovpn-link', `生成免登录下载链接 ${q.id.slice(0, 40)}`, clientIp);
+    return json({ ok: true, url: link, expiresIn: config.ovpn.linkTokenTtlSeconds });
   }
 
   // —— 生成 .ovpn ——

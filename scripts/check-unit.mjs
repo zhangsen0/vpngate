@@ -12,7 +12,7 @@ import { validateConfig, mergeConfig, DEFAULTS, loadConfig, saveConfig, setStora
 import { parseCsv, parseJson, normalizeServers } from '../functions/_lib/sources.js';
 import { applyFilters, scoreServer, runOptimize } from '../functions/_lib/optimize.js';
 import { decodeConfig, buildOvpn, nodeParams } from '../functions/_lib/ovpn.js';
-import { checkLoginLock, recordLoginFail, clearLoginLock } from '../functions/_lib/auth.js';
+import { checkLoginLock, recordLoginFail, clearLoginLock, signFileToken, verifyFileToken } from '../functions/_lib/auth.js';
 import { log, readLogs } from '../functions/_lib/log.js';
 
 // ==================== 构造样本数据 ====================
@@ -289,4 +289,24 @@ test('汇总：所有模块可加载、默认配置结构完整', () => {
   assert.ok(DEFAULTS.fetch.timeoutMs > 0);
   assert.ok(DEFAULTS.dataSources.length >= 1);
   assert.ok(['csv', 'json'].includes(DEFAULTS.dataSources[0].type));
+});
+
+// ==================== 免登录文件令牌 ====================
+
+test('signFileToken/verifyFileToken：签名有效、id 绑定、过期拒绝、篡改拒绝', async () => {
+  const env = { APP_PASSWORD: 'admin123' };
+  const id = 'public-vpn-1|1.1.1.1';
+  const token = await signFileToken(env, id, 60000);
+  assert.ok(token && token.includes('.'), '令牌格式 payload.sig');
+
+  assert.ok(await verifyFileToken(env, token, id), '正确 id + 有效期内 → true');
+  assert.ok(!(await verifyFileToken(env, token, 'other-id')), 'id 不匹配 → false');
+  assert.ok(!(await verifyFileToken(env, token + 'x', id)), '签名被篡改 → false');
+  assert.ok(!(await verifyFileToken(env, token, '')), '空 id → false');
+
+  const expired = await signFileToken(env, id, -1000);
+  assert.ok(!(await verifyFileToken(env, expired, id)), '已过期 → false');
+
+  // 无密钥时不可签发
+  assert.equal(await signFileToken({}, id, 60000), null);
 });
