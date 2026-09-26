@@ -22,19 +22,58 @@ const CACHE_PREFIX = 'https://vpngate.local/cache/';
 // ==================== 拉取 ====================
 
 /**
- * 拉取单个数据源原文（超时由调用方统一控制）。
+ * 拉取单个数据源原文（内部含失败重试；总预算由调用方 withTimeout 控制）。
  * @param {object} source - { id, url, type }
+ * @param {object} fetchOpts - { userAgent, retries, timeoutMs, dnsResolver }
  * @returns {Promise<string>} 原文文本
  */
-export async function fetchSource(source) {
-  const res = await fetch(source.url, {
-    headers: { 'User-Agent': 'vpngate-optimizer/1.0 (+https://github.com/zhangsen0/vpngate)' },
-    redirect: 'follow',
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const text = await res.text();
-  if (!text || text.length < 100) throw new Error('响应体过小，疑似不可用');
-  return text;
+export async function fetchSource(source, fetchOpts = {}) {
+  const {
+    userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    retries = 1,
+    timeoutMs = 8000,
+    dnsResolver = '',
+  } = fetchOpts;
+  const headers = {
+    'User-Agent': userAgent,
+    Accept: 'text/plain,text/csv,application/json,text/html,*/*',
+  };
+  const url = source.url;
+  let lastErr;
+
+  // 可选：官方源 DNS 覆盖（绕国内 DNS 污染）——用 Google DoH 解析真实 IP 后直连
+  const tryResolve = async (u) => {
+    if (!dnsResolver || dnsResolver !== 'google') return u;
+    const host = new URL(u).hostname;
+    try {
+      const r = await fetch(`https://dns.google/resolve?name=${encodeURIComponent(host)}&type=A`, {
+        headers: { 'User-Agent': 'vpngate-dns/1.0' },
+      });
+      if (!r.ok) return u;
+      const j = await r.json();
+      const ip = (j.Answer || []).find((a) => a.type === 1 && /^\d+\.\d+\.\d+\.\d+$/.test(a.data));
+      if (!ip) return u;
+      const nu = new URL(u);
+      nu.hostname = ip.data;
+      return nu.toString();
+    } catch {
+      return u;
+    }
+  };
+
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const target = await tryResolve(url);
+      const res = await fetch(target, { headers, redirect: 'follow' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      if (!text || text.length < 100) throw new Error('响应体过小，疑似不可用');
+      return text;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr;
 }
 
 // ==================== 解析 ====================
@@ -174,7 +213,14 @@ export async function getServers(env, config, opts = {}) {
   for (const source of ordered) {
     const t0 = Date.now();
     try {
-      const text = await withTimeout(fetchSource(source), config.fetch.timeoutMs);
+      const fetchOpts = {
+        userAgent: config.fetch.userAgent,
+        retries: config.fetch.retries,
+        timeoutMs: config.fetch.timeoutMs,
+        dnsResolver: config.fetch.dnsResolver,
+      };
+      const totalBudget = config.fetch.timeoutMs * (config.fetch.retries + 1);
+      const text = await withTimeout(fetchSource(source, fetchOpts), totalBudget);
       const raw = source.type === 'json' ? parseJson(text) : parseCsv(text);
       servers = normalizeServers(raw).slice(0, config.fetch.maxServers);
       statuses.push({ id: source.id, name: source.name, ok: true, count: servers.length, ms: Date.now() - t0 });

@@ -60,6 +60,12 @@ export const DEFAULTS = {
     maxServers: 400,
     /** 服务器列表缓存时长(秒) */
     cacheSeconds: 300,
+    /** 请求 UA（官方源对非浏览器 UA 可能拒绝；镜像源无感） */
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    /** 拉取失败重试次数（官方源瞬时 504/超时可自动重试） */
+    retries: 1,
+    /** 官方源 DNS 覆盖：留空用 Cloudflare 边缘自带干净 DNS；填 'google' 时先经 DoH 解析真实 IP 再直连（绕国内 DNS 污染） */
+    dnsResolver: '',
   },
   filters: {
     /** 禁用国家（ISO 3166 两位码），命中即剔除 */
@@ -151,6 +157,12 @@ export const SCHEMA = [
   { key: 'fetch.timeoutMs', group: '拉取', label: '数据源超时(ms)', type: 'int', min: 1000, max: 60000, unit: 'ms' },
   { key: 'fetch.maxServers', group: '拉取', label: '最大服务器数', type: 'int', min: 1, max: 2000 },
   { key: 'fetch.cacheSeconds', group: '拉取', label: '列表缓存时长(秒)', type: 'int', min: 30, max: 86400, unit: 's' },
+  { key: 'fetch.userAgent', group: '拉取', label: '请求 UA', type: 'text',
+    hint: '官方源对非浏览器 UA 可能拒绝；留空用默认浏览器 UA' },
+  { key: 'fetch.retries', group: '拉取', label: '失败重试次数', type: 'int', min: 0, max: 5, unit: '次',
+    hint: '官方源瞬时 504/超时可自动重试' },
+  { key: 'fetch.dnsResolver', group: '拉取', label: '官方源 DNS 解析', type: 'select', options: ['', 'google'],
+    hint: '留空用 CF 边缘干净 DNS；google=先经 Google DoH 解析真实 IP 再直连（绕国内 DNS 污染）' },
 
   // —— 筛选 ——
   { key: 'filters.disabledCountryCodes', group: '筛选', label: '禁用国家(两位码)', type: 'arrayString',
@@ -243,9 +255,13 @@ export function validateConfig(cfg) {
     return node === undefined || node === null ? def : node;
   };
 
-  config.fetch.timeoutMs = clamp(intOf(withDefault('fetch.timeoutMs', 15000), 15000), 1000, 60000);
+  config.fetch.timeoutMs = clamp(intOf(withDefault('fetch.timeoutMs', 8000), 8000), 1000, 60000);
   config.fetch.maxServers = clamp(intOf(withDefault('fetch.maxServers', 400), 400), 1, 2000);
   config.fetch.cacheSeconds = clamp(intOf(withDefault('fetch.cacheSeconds', 300), 300), 30, 86400);
+  config.fetch.retries = clamp(intOf(withDefault('fetch.retries', 1), 1), 0, 5);
+  config.fetch.userAgent = typeof withDefault('fetch.userAgent', '') === 'string' && config.fetch.userAgent
+    ? config.fetch.userAgent : DEFAULTS.fetch.userAgent;
+  config.fetch.dnsResolver = ['', 'google'].includes(config.fetch.dnsResolver) ? config.fetch.dnsResolver : '';
 
   config.filters.disabledCountryCodes = strArrayOf(withDefault('filters.disabledCountryCodes', []));
   config.filters.enabledCountryCodes = strArrayOf(withDefault('filters.enabledCountryCodes', []));
