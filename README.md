@@ -9,7 +9,7 @@
 - **可配置优选**：评分权重、筛选阈值、探测端口、结果条数等全部参数均可在页面修改（存于 Cloudflare KV）。
 - **实测连通**：对静态评分靠前的节点做 TCP 握手探测（Cloudflare 边缘），只推荐真实可达的节点。
 - **本机校验**：CF 边缘可达 ≠ 本机可达（ISP 可能屏蔽该 IP）。提供三种本机校验途径：一键本机探测命令（python3/PowerShell，精确 TCP 结果）、单文件浏览器探测页（本地 http 打开直测）、浏览器直连探测（http 页面自动生效）。结果可粘贴回页面自动标记，支持“仅本机可达”过滤。
-- **多端一键使用**：节点详情与优选卡片内置「多端一键」面板，覆盖 iOS / Android（文件关联一步打开）、Windows（PowerShell 一条命令）、macOS（终端一键导入）、Linux（openvpn 命令行一键连接），每端附下载与复制命令入口。
+- **多端原生创建 VPN**：节点详情与优选卡片内置「多端」面板。Linux 支持 NetworkManager <b>原生创建</b>系统 VPN 连接（nmcli 导入 + 启停）；iOS/Android 经官方 OpenVPN Connect 一键导入（系统级 IPSec/IKEv2 不支持 OpenVPN 协议）；Windows/macOS 官方客户端一键导入；均附下载、复制链接/命令入口。
 - **即配即用**：一键下载 .ovpn 配置文件，或复制节点参数（IP / 端口 / 协议 / 账密）。
 - **轻量可信**：无框架单页应用，加载快；信息精炼，只展示关键指标。
 - **快速部署**：测试环境手动直传部署包；生产环境 GitHub Actions 自动部署（均托管在 Cloudflare Pages）。
