@@ -80,11 +80,18 @@ export async function fetchSource(source, fetchOpts = {}) {
 
 /**
  * 解析 VPNGate CSV 文本。
- * 格式：首行为表头；数据行以逗号分隔；以 * 开头的行（如底部版权行）跳过。
+ * 官方格式：首行 `*vpn_servers`（版本标记），第二行以 `#` 开头的表头，之后为数据行；底部另有 `*` 版权行。
+ * 兼容无 `*`/`#` 的简化 CSV（直接首行为表头）。
  */
 export function parseCsv(text) {
   const lines = text.split(/\r?\n/);
-  const header = lines[0].split(',');
+  // 表头行：优先取以 # 开头的行（官方格式）；否则取首个非空行
+  let headerLine = lines.find((l) => l.startsWith('#'));
+  if (!headerLine) {
+    const first = lines.find((l) => l && !l.startsWith('*') && !l.startsWith('#'));
+    headerLine = first || lines[0] || '';
+  }
+  const header = headerLine.replace(/^#/, '').split(',');
   const idx = (name) => header.indexOf(name);
   const iHost = idx('HostName'), iIp = idx('IP'), iScore = idx('Score'), iPing = idx('Ping'),
     iSpeed = idx('Speed'), iCountryLong = idx('CountryLong'), iCountryShort = idx('CountryShort'),
@@ -93,8 +100,8 @@ export function parseCsv(text) {
   if (iHost < 0 || iIp < 0 || iB64 < 0) throw new Error(`CSV 表头不匹配，非 VPNGate 格式：${text.slice(0, 160)}`);
 
   const servers = [];
-  for (const line of lines.slice(1)) {
-    if (!line || line.startsWith('*') || line.startsWith('#') || line === '') continue;
+  for (const line of lines) {
+    if (!line || line.startsWith('*') || line.startsWith('#') || line === headerLine) continue;
     const f = line.split(',');
     if (f.length < iB64 + 1) continue;
     servers.push({
