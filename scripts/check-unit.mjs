@@ -182,6 +182,29 @@ test('buildOvpn：base64 解码、remote 改写为 IP、附加选项追加', () 
   assert.equal(ovpn.proto, 'tcp');
 });
 
+test('buildOvpn：清理证书块外的大写残留指令（SoftEther 模板），证书块内保留', () => {
+  const cfg = mergeConfig({ ovpn: { rewriteRemoteToIp: false, appendOptions: [] } });
+  // 模拟 SoftEther 模板：证书块内有大写 base64，块外有 DATA-CIPHERS / AUTH-NOCACHE / BLOCK-OUTSIDE-DNS
+  const raw = `client
+remote 2.2.2.2 1194 udp
+<key>
+AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/=
+</key>
+DATA-CIPHERS AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305
+AUTH-NOCACHE
+BLOCK-OUTSIDE-DNS
+data-ciphers AES-128-CBC
+auth SHA1`;
+  const server = { id: 't|2.2.2.2', ip: '2.2.2.2', configBase64: Buffer.from(raw).toString('base64') };
+  const ovpn = buildOvpn(server, cfg);
+  assert.ok(ovpn, '应成功生成');
+  assert.ok(!ovpn.text.includes('DATA-CIPHERS'), '大写 DATA-CIPHERS 应被删除');
+  assert.ok(!ovpn.text.includes('AUTH-NOCACHE'), '大写 AUTH-NOCACHE 应被删除');
+  assert.ok(!ovpn.text.includes('BLOCK-OUTSIDE-DNS'), '大写 BLOCK-OUTSIDE-DNS 应被删除');
+  assert.ok(ovpn.text.includes('AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/='), '证书块内 base64 应保留');
+  assert.ok(ovpn.text.includes('data-ciphers AES-128-CBC'), '小写指令应保留');
+});
+
 test('buildOvpn：rewriteRemoteToIp=false 时保留原始 remote', () => {
   const cfg = mergeConfig({ ovpn: { rewriteRemoteToIp: false } });
   const server = parseCsv(sampleCsv())[1];
