@@ -47,7 +47,7 @@ export function parseRemotePortProto(configBase64) {
 /** 数据源缓存命名空间前缀 */
 const CACHE_PREFIX = 'https://vpngate.local/cache/';
 /** 服务器数据结构版本：结构变更（新增字段等）时 bump，避免旧缓存无新字段 */
-const SERVERS_DATA_VERSION = 2;
+const SERVERS_DATA_VERSION = 3;
 
 // ==================== 拉取 ====================
 
