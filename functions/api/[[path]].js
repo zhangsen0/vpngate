@@ -19,7 +19,7 @@
 
 import { json, readJson, queryParams, sha1Hex } from '../_lib/util.js';
 import { loadConfig, saveConfig, resetConfig, setStorageMode, syncToKv, DEFAULTS, SCHEMA } from '../_lib/config.js';
-import { getServers } from '../_lib/sources.js';
+import { getServers, LIGHT_FIELDS } from '../_lib/sources.js';
 import { runOptimize } from '../_lib/optimize.js';
 import { buildOvpn, nodeParams } from '../_lib/ovpn.js';
 import { probeServer } from '../_lib/probe.js';
@@ -151,12 +151,10 @@ async function route(method, path, request, env) {
       sourceId: q.source || undefined,
     });
     if (force) log(env, 'servers-refresh', `强制刷新（源=${q.source || '全部'}）`, clientIp);
-    // 列表返回轻量字段（不含 base64）
+    // 列表返回轻量字段（不含 base64）；字段白名单统一来自 sources.js LIGHT_FIELDS（避免硬编码遗漏新字段）
     const light = result.servers.map((s) => {
       const o = {};
-      for (const k of ['id', 'hostname', 'ip', 'countryLong', 'countryShort', 'score', 'pingMs', 'speedBps', 'sessions', 'uptimeHours', 'logType', 'operator']) {
-        o[k] = s[k];
-      }
+      for (const k of LIGHT_FIELDS) o[k] = s[k];
       return o;
     });
     return json({
