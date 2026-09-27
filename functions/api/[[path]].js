@@ -27,6 +27,7 @@ import {
   issueToken, authCookieHeaders, clearCookieHeaders, safeEqual, isAuthed,
   checkLoginLock, recordLoginFail, clearLoginLock, signFileToken,
 } from '../_lib/auth.js';
+import { rememberServer, findServerSnapshot } from '../_lib/snapshot.js';
 import { log, readLogs, flushPendingLogs } from '../_lib/log.js';
 
 export async function onRequest(context) {
@@ -230,6 +231,10 @@ async function route(method, path, request, env) {
     const ttlMs = config.ovpn.linkTokenTtlSeconds * 1000;
     const token = await signFileToken(env, q.id, ttlMs);
     if (!token) return json({ ok: false, error: '签名密钥不可用（未配置 APP_PASSWORD）' }, 500);
+    // 节点快照：列表刷新导致节点下线时，链接在有效期内仍可下载
+    const result = await getServers(env, config);
+    const server = result.servers.find((s) => s.id === q.id);
+    if (server) rememberServer(server, ttlMs * 3);
     const url = new URL(request.url);
     const link = `${url.origin}/api/ovpn?id=${encodeURIComponent(q.id)}&token=${encodeURIComponent(token)}`;
     log(env, 'ovpn-link', `生成免登录下载链接 ${q.id.slice(0, 40)}`, clientIp);
@@ -242,7 +247,9 @@ async function route(method, path, request, env) {
     if (!q.id) return json({ ok: false, error: '缺少 id 参数' }, 400);
     const { config } = await loadConfig(env);
     const result = await getServers(env, config);
-    const server = result.servers.find((s) => s.id === q.id);
+    let server = result.servers.find((s) => s.id === q.id);
+    // 列表刷新后节点可能下线：回退到内存快照（链接有效期内仍可下载）
+    if (!server) server = findServerSnapshot(q.id);
     if (!server) return json({ ok: false, error: '未找到该服务器，可能已从列表移除' }, 404);
     const ovpn = buildOvpn(server, config);
     if (!ovpn) return json({ ok: false, error: '该服务器缺少 OpenVPN 配置数据' }, 404);

@@ -13,6 +13,7 @@ import { parseCsv, parseJson, normalizeServers } from '../functions/_lib/sources
 import { applyFilters, scoreServer, runOptimize } from '../functions/_lib/optimize.js';
 import { decodeConfig, buildOvpn, nodeParams } from '../functions/_lib/ovpn.js';
 import { checkLoginLock, recordLoginFail, clearLoginLock, signFileToken, verifyFileToken } from '../functions/_lib/auth.js';
+import { rememberServer, findServerSnapshot } from '../functions/_lib/snapshot.js';
 import { log, readLogs } from '../functions/_lib/log.js';
 
 // ==================== 构造样本数据 ====================
@@ -309,4 +310,17 @@ test('signFileToken/verifyFileToken：签名有效、id 绑定、过期拒绝、
 
   // 无密钥时不可签发
   assert.equal(await signFileToken({}, id, 60000), null);
+});
+
+// ==================== 节点快照缓存 ====================
+
+test('rememberServer/findServerSnapshot：写入可查、过期清理、未过期保留', () => {
+  const s1 = { id: 'a|1.1.1.1', ip: '1.1.1.1', configBase64: 'x' };
+  const s2 = { id: 'b|2.2.2.2', ip: '2.2.2.2', configBase64: 'y' };
+  rememberServer(s1, 3600000); // 1h
+  rememberServer(s2, -1000);   // 已过期
+  assert.equal(findServerSnapshot('a|1.1.1.1').ip, '1.1.1.1', '未过期可查');
+  assert.equal(findServerSnapshot('b|2.2.2.2'), null, '过期清理');
+  assert.equal(findServerSnapshot('不存在'), null, '未知 id 返回 null');
+  rememberServer(null); // 非法输入不报错
 });
