@@ -864,7 +864,8 @@ function pfPanelHtml(platform, url, label) {
         `<b>macOS</b>：系统设置 → 网络 → VPN → 添加 → 类型 <b>L2TP over IPsec</b> → 填参数 → 连接。`,
         `部分节点可能未启用 L2TP，连接失败时换 OpenVPN 方式或换节点。`,
       ],
-      cmd: `Add-VpnConnection -Name "${label}" -ServerAddress ${ip} -TunnelType L2tp -L2tpPsk "vpn" -AuthenticationMethod PAP -EncryptionLevel Optional -Force -RememberCredential`,
+      // Windows 原生 L2TP 需注册表 AssumeUDPEncapsulationContext=2（国内 NAT 环境），否则默认直连失败
+      cmd: `New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\PolicyAgent" -Name AssumeUDPEncapsulationContext -Value 2 -PropertyType DWORD -Force | Out-Null; Add-VpnConnection -Name "${label}" -ServerAddress ${ip} -TunnelType L2tp -L2tpPsk "vpn" -AuthenticationMethod PAP -EncryptionLevel Optional -Force -RememberCredential`,
       cmdLabel: '复制 Windows 创建命令',
       altCmd: `rasdial "${label}" vpn vpn`,
       altCmdLabel: '复制 Windows 连接命令',
