@@ -51,7 +51,7 @@ export const DEFAULT_SOURCES = [
 ];
 
 export const DEFAULTS = {
-  version: 1,
+  version: 2,
   dataSources: DEFAULT_SOURCES,
   fetch: {
     /** 单数据源拉取超时(ms)（镜像源实测 <1s；官方不可达时快速交给镜像接管） */
