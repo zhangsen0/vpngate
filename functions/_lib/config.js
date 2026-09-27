@@ -124,11 +124,14 @@ export const DEFAULTS = {
   ovpn: {
     /** 生成的 .ovpn 中是否把 remote 主机名改写为 IP（直连优选 IP） */
     rewriteRemoteToIp: true,
-    /** 追加到 .ovpn 末尾的附加选项（每行一个） */
+    /** 追加到 .ovpn 末尾的附加选项（每行一个）：
+     *  仅保留跨平台（Windows/macOS/Linux/Android/iOS）都合法的指令。
+     *  - auth-nocache：全平台支持；
+     *  - 不追加 data-ciphers：原始配置自带（如 data-ciphers AES-128-CBC），
+     *    追加会覆盖原始值导致 cipher 协商失败；
+     *  - 不追加 block-outside-dns：Windows 专用，Linux/macOS 上 OpenVPN 2.5+ 报 Options error。 */
     appendOptions: [
-      'data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305',
       'auth-nocache',
-      'block-outside-dns',
     ],
     /** 免登录下载链接令牌有效期(秒)：供 OpenVPN Connect 等外部客户端无 Cookie 直接导入 .ovpn */
     linkTokenTtlSeconds: 600,
