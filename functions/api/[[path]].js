@@ -149,6 +149,7 @@ async function route(method, path, request, env) {
     const body = await readJson(request).catch(() => null);
     const { config } = await loadConfig(env);
     const maxNodes = Math.min(Math.max(Number((config.ovpnProbe || {}).maxNodes) || 40, 1), 80);
+    const mode = body && body.mode === 'https' ? 'https' : 'ovpn';
     let targets = [];
     const ids = Array.isArray(body && body.ids) ? body.ids.map(String).slice(0, 80) : [];
     const ips = Array.isArray(body && body.ips) ? body.ips.map(String).slice(0, 80) : [];
@@ -167,7 +168,22 @@ async function route(method, path, request, env) {
         .map((ip) => ({ id: ip, ip }));
     }
     if (!targets.length) return json({ ok: true, results: {}, note: '无匹配目标' });
-    const results = await probeOvpnBatch(config, targets);
+    let results;
+    if (mode === 'https') {
+      // 对照模式：标准 HTTPS 握手（忽略证书），用于识别 443 上是否运行 HTTPS 管理服务
+      results = {};
+      await Promise.all(targets.map(async (t) => {
+        const t0 = Date.now();
+        try {
+          const r = await fetch(`https://${t.ip}/`, { signal: AbortSignal.timeout(5000) });
+          results[t.id] = { online: r.ok, https: true, status: r.status, rttMs: Date.now() - t0, error: null };
+        } catch (e) {
+          results[t.id] = { online: false, https: true, rttMs: Date.now() - t0, error: e.name || e.message };
+        }
+      }));
+    } else {
+      results = await probeOvpnBatch(config, targets);
+    }
     log(env, 'ovpn-probe', `CF 边缘 OpenVPN 探测 ${targets.length} 个目标（在线 ${Object.values(results).filter((r) => r.online).length}）`, clientIp);
     return json({ ok: true, results });
   }
