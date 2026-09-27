@@ -881,6 +881,7 @@ function pfPanelHtml(platform, url, label) {
         `<b>③</b> 或直接在「文件/下载」中点该 .ovpn →「用 OpenVPN Connect 打开」→ 导入；`,
         `<b>④</b> 连接时账密输入 <b>vpn / vpn</b>（勾选 Import autologin profile 可免密）。`,
         `⚠️ 不要用 URL 标签粘贴链接：那是「服务器地址/Cloud ID」入口，不支持 .ovpn 配置下载。`,
+        `<b>Android 原生参考（无 L2TP 选项时）</b>：设置 → VPN → 添加 → 类型 <b>IKEv2/IPsec MSCHAPv2</b> → 服务器=${ip}、用户名/密码 <b>vpn / vpn</b> → 连接（SoftEther 默认开放 IKEv2）；或类型 <b>IKEv2/IPsec PSK</b> → 密钥 <b>vpn</b>。`,
       ],
       cmd: url,
       cmdLabel: '复制配置链接',
@@ -923,18 +924,10 @@ function pfPanelHtml(platform, url, label) {
       altCmdLabel: '复制 CLI 连接命令',
     },
     guide: {
-      tab: '📖 L2TP 全端指南',
-      title: 'L2TP/IPsec 全平台使用指南（系统原生 · 免第三方客户端）',
-      noCmd: true, // 纯文档面板：不渲染下载配置与命令按钮
-      steps: [
-        `<b>统一参数</b>（所有平台一致）：服务器（Server）= <b>${ip}</b> · 类型 = <b>L2TP/IPsec（PSK）</b> · 预共享密钥（PSK/Secret）= <b>vpn</b> · 用户名/密码 = <b>vpn / vpn</b>。`,
-        `<b>① iOS（iPhone/iPad）</b>：设置 → 通用 → VPN 与设备管理 → 添加 VPN 配置 → 类型选 <b>L2TP/IPSec</b> → 服务器=${ip}、账户=vpn、密码=vpn、密钥=<b>vpn</b> → 完成 → 连接。`,
-        `<b>② Android（分系统版本）</b>：设置 → 网络与互联网/连接 → VPN → 添加（＋）→ 类型选 <b>L2TP/IPSec PSK</b> → 服务器=${ip}、PSK=<b>vpn</b>、账密=vpn/vpn → 连接。<br/>⚠️ 原生 Android 12+ 已移除 L2TP 选项；国产 ROM（MIUI/HarmonyOS/ColorOS/OriginOS 等）一般保留，若类型列表没有 L2TP，请改用 OpenVPN 方式（见 iOS/Android 标签页）或 iOS/Windows/Linux。`,
-        `<b>③ Windows（10/11，推荐一条命令）</b>：以管理员身份打开 PowerShell，运行下方「复制 Windows 创建命令」（内置注册表 NAT 补丁 AssumeUDPEncapsulationContext=2，国内网络必填），再运行「复制 Windows 连接命令」。<br/>手动方式：设置 → 网络和 Internet → VPN → 添加 VPN 连接 → VPN 类型 <b>L2TP/IPsec</b> → 预共享密钥 <b>vpn</b> → 账密 vpn/vpn → 连接。`,
-        `<b>④ macOS</b>：系统设置 → 网络 → VPN → 添加 VPN 配置 → 类型 <b>L2TP over IPsec</b> → 服务器=${ip}、账户=vpn、密码=vpn → 认证设置里选「共享的密钥」并填 <b>vpn</b> → 连接。`,
-        `<b>⑤ Linux（推荐一行命令）</b>：下方「复制 Linux 创建命令」自动安装 network-manager-l2tp 并创建连接（含 IPsec PSK vpn）。<br/>无桌面环境（纯 CLI）：<code>sudo apt install -y xl2tpd strongswan</code>，在 /etc/ipsec.conf 设密钥 vpn、/etc/xl2tpd/xl2tpd.conf 指向 ${ip} 后拨号。`,
-        `<b>常见问题</b>：<br/>① 连不上 → 换节点重试（L2TP 非所有节点都开启）或换网络（WiFi↔流量）；<br/>② Windows 报 789/691 → 确认注册表补丁已加、账密为 <b>vpn/vpn</b>；<br/>③ iOS 提示「IPsec 连接失败」→ 确认密钥 PSK 填 <b>vpn</b>、类型为 L2TP/IPSec；<br/>④ 速度慢/频繁断开 → 在优选列表选评分高、在线时间长（如 100+ 天）的节点；<br/>⑤ 本节点连不上可换卡片/列表其他节点，配置参数格式完全一致。`,
-      ],
+      tab: '📖 使用说明',
+      title: '全客户端使用说明（OpenVPN / L2TP · 详细步骤）',
+      noCmd: true, // 纯文档面板：不渲染下载配置与命令按钮（内容含命令由复制按钮提供）
+      steps: fullGuideSteps(ip),
     },
   };
   const key = platform && panels[platform] ? platform : 'l2tp';
@@ -973,34 +966,50 @@ function pfPanelHtml(platform, url, label) {
     <div class="pf-tabs">${tabHtml}</div>${panelHtml}`;
 }
 
-/** 打开主页「L2TP 指南」弹窗：全平台 L2TP/IPsec 使用说明（通用版，不绑定具体节点）。 */
+/** 全客户端使用说明（详细版）：OpenVPN + L2TP/IPsec 全平台步骤与常见问题。
+ * @param {string|null} ip - 节点 IP（主页传 null 用占位；多端面板传节点 IP）
+ * @returns {string[]} 步骤数组（渲染为 <ol>）
+ */
+function fullGuideSteps(ip) {
+  const host = ip || '节点IP';
+  const ovpnUrl = ip ? '' : '（从优选卡片/多端面板复制）';
+  return [
+    `<b>一、两种连接方式怎么选</b><br/>本节点由 SoftEther 驱动，同时开放 <b>OpenVPN（TCP 443，需客户端）</b>与 <b>L2TP/IPsec（UDP，系统原生免客户端）</b>。账密统一 <b>vpn / vpn</b>，L2TP 预共享密钥 <b>vpn</b>。<br/>判断：卡片「本机✓」= 你的网络到节点 TCP 可达；「服务✓/✗」= CF 边缘确认该节点 443 是否启用 OpenVPN 服务——<b>服务✗ 时 OpenVPN 一定连不上，直接改用 L2TP</b>。`,
+    `<b>二、OpenVPN · iOS（iPhone/iPad）</b><br/>① App Store 安装 <b>OpenVPN Connect</b>（官方免费）；<br/>② 本页「下载配置」保存 .ovpn（或复制链接在手机浏览器打开自动下载）；<br/>③ 打开 App →「Get connected」→ 切到 <b>Upload File</b> 标签 → 选择刚下载的 .ovpn 文件 → Import；<br/>④ 连接时账密输入 <b>vpn / vpn</b>（勾选 Import autologin profile 可免密）。<br/>⚠️ 不要在 URL 标签粘贴链接——那是「服务器地址/Cloud ID」入口，不支持 .ovpn 配置下载。`,
+    `<b>三、OpenVPN · Android</b><br/>① Play 商店安装 <b>OpenVPN Connect</b>；<br/>② 本页「下载配置」保存 .ovpn（或复制链接在浏览器打开下载）；<br/>③ 方式 A：打开 App → Get connected → <b>Upload File</b> → 选 .ovpn → Import；方式 B：在「文件/下载」里点 .ovpn →「用 OpenVPN Connect 打开」→ 导入；<br/>④ 连接账密 <b>vpn / vpn</b>。`,
+    `<b>四、OpenVPN · Windows（10/11）</b><br/>① 安装 <b>OpenVPN GUI</b>（openvpn.net 下载，装时选 OpenVPN Service 组件）或 OpenVPN Connect；<br/>② 本页「下载配置」保存 .ovpn → 右键 → <b>Open with OpenVPN GUI</b>（或 OpenVPN Connect 里 Upload File 导入）；<br/>③ 托盘图标 → Connect → 账密 <b>vpn / vpn</b>；<br/>④ 或用下方「复制 Windows OpenVPN 命令」一条命令下载并打开导入。`,
+    `<b>五、OpenVPN · macOS</b><br/>① 安装 <b>Tunnelblick</b>（免费开源）或 OpenVPN Connect；<br/>② 本页「下载配置」保存 .ovpn → <b>双击</b> → 自动导入 Tunnelblick（或 Upload File 导入 Connect）；<br/>③ 连接账密 <b>vpn / vpn</b>。`,
+    `<b>六、OpenVPN · Linux</b><br/>① 有桌面环境：<code>sudo apt install network-manager-openvpn-gnome</code>，然后在「设置 → 网络 → VPN」导入 .ovpn；<br/>② 纯命令行（推荐）：运行下方「复制 Linux OpenVPN 命令」——自动下载配置并用 <code>sudo openvpn --config</code> 连接，账密 <b>vpn / vpn</b>，Ctrl+C 断开。`,
+    `<b>七、L2TP/IPsec · 统一参数</b><br/>服务器=<b>${host}</b> · 类型 <b>L2TP/IPsec（PSK）</b> · 预共享密钥 <b>vpn</b> · 账密 <b>vpn / vpn</b>。<br/>L2TP 走 UDP/ESP，国内网络普遍可连（OpenVPN 被运营商干扰/服务未开时优先用）。`,
+    `<b>八、L2TP · iOS</b>：设置 → 通用 → VPN 与设备管理 → 添加 VPN 配置 → 类型 <b>L2TP/IPSec</b> → 服务器=${host}、账户=vpn、密码=vpn、密钥=<b>vpn</b> → 完成 → 连接。`,
+    `<b>九、Android（原生参考 · 含高版本）</b><br/>① <b>IKEv2/IPsec MSCHAPv2（原生推荐，Android 12+ 保留）</b>：设置 → VPN → 添加 → 类型 <b>IKEv2/IPsec MSCHAPv2</b> → 服务器=${host}、用户名 <b>vpn</b>、密码 <b>vpn</b> → 连接（SoftEther IPsec 服务默认开放 IKEv2，账密统一 vpn/vpn）；<br/>② 若 MSCHAPv2 不适用，试类型 <b>IKEv2/IPsec PSK</b> → 预共享密钥 <b>vpn</b>；<br/>③ 部分 ROM 仍有 <b>L2TP/IPSec PSK</b> 选项（国产 ROM MIUI/HarmonyOS/ColorOS/OriginOS 一般保留）：服务器=${host}、PSK=<b>vpn</b>、账密=vpn/vpn → 连接；<br/>④ 均不可用时用 OpenVPN Connect（见第三条）。<br/>⚠️ 原生 Android 12+ 已移除 L2TP 但<b>保留 IKEv2</b>；节点未启用 IKEv2 时换节点重试。`,
+    `<b>十、L2TP · Windows</b>：以管理员 PowerShell 运行下方「复制 Windows L2TP 创建命令」（内置注册表 NAT 补丁 <code>AssumeUDPEncapsulationContext=2</code>，国内网络必填），再运行「复制 Windows L2TP 连接命令」。<br/>手动：设置 → 网络和 Internet → VPN → 添加 VPN 连接 → VPN 类型 <b>L2TP/IPsec</b> → 预共享密钥 <b>vpn</b> → 账密 vpn/vpn。`,
+    `<b>十一、L2TP · macOS</b>：系统设置 → 网络 → VPN → 添加 VPN 配置 → 类型 <b>L2TP over IPsec</b> → 服务器=${host}、账户=vpn、密码=vpn → 认证设置选「共享的密钥」填 <b>vpn</b> → 连接。`,
+    `<b>十二、L2TP · Linux</b>：运行下方「复制 Linux L2TP 创建命令」自动安装 network-manager-l2tp 并创建连接。<br/>纯 CLI：<code>sudo apt install -y xl2tpd strongswan</code>，在 /etc/ipsec.conf 设密钥 <b>vpn</b>、/etc/xl2tpd/xl2tpd.conf 指向 ${host} 后拨号。`,
+    `<b>十三、下载配置链接说明</b>：面板/卡片的「下载配置」与「复制链接」是 <b>带令牌的免登录链接</b>（.ovpn 结尾），默认有效期 10 分钟；可在任意设备/客户端直接下载导入，无需登录本系统。`,
+    `<b>十四、常见问题</b><br/>① 连不上 → 先看卡片「本机✗」（网络不可达，换节点/换网络）与「服务✗」（节点未开 OpenVPN，改用 L2TP）；<br/>② OpenVPN 导入失败 → 用 <b>Upload File</b> 选 .ovpn 文件，勿在 URL 标签粘贴；<br/>③ 反复要账密 → 账密是 <b>vpn / vpn</b>（不是登录本系统的密码）；<br/>④ Windows L2TP 报 789/691 → 确认注册表补丁已加、账密正确；<br/>⑤ iOS L2TP 报「IPsec 失败」→ 确认 PSK 填 <b>vpn</b>；<br/>⑥ 速度慢/不稳 → 选评分高、在线时间长（100+ 天）的节点；<br/>⑦ 部分节点 OpenVPN/L2TP 服务未启用 → 多试几个节点（配置参数格式一致）；<br/>⑧ 节点动态上下线 → 稍后重试或刷新列表。`,
+  ];
+}
+
+/** 打开主页「使用说明」弹窗：全客户端详细使用说明（通用版，不绑定具体节点）。 */
 function openGuideModal() {
   const body = document.getElementById('guideBody');
+  const steps = fullGuideSteps(null);
+  const winCmd = `New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\PolicyAgent" -Name AssumeUDPEncapsulationContext -Value 2 -PropertyType DWORD -Force | Out-Null; Add-VpnConnection -Name "vpngate" -ServerAddress 节点IP -TunnelType L2tp -L2tpPsk "vpn" -AuthenticationMethod PAP -EncryptionLevel Optional -Force -RememberCredential; rasdial "vpngate" vpn vpn`;
+  const linuxL2tp = `sudo apt install -y network-manager-l2tp && nmcli connection add type l2tp con-name "vpngate" l2tp.gateway 节点IP l2tp.username vpn l2tp.password vpn ipsec.psk vpn ipsec.enable yes && nmcli connection up "vpngate"`;
+  const winOvpn = `curl -L -o vpngate.ovpn "配置链接" && start vpngate.ovpn`;
+  const linuxOvpn = `curl -L -o vpngate.ovpn "配置链接" && printf "vpn\\nvpn\\n" > auth.txt && sudo openvpn --config vpngate.ovpn --auth-user-pass auth.txt`;
   body.innerHTML = `
-    <div class="section-title">统一参数（所有平台一致）</div>
-    <div class="lc-hint">服务器（Server）= <b>优选/列表里任意节点的 IP</b> · 类型 <b>L2TP/IPsec（PSK）</b> · 预共享密钥（PSK/Secret）<b>vpn</b> · 用户名/密码 <b>vpn / vpn</b></div>
-    <ol class="steps">
-      <li><b>① iOS（iPhone/iPad）</b>：设置 → 通用 → VPN 与设备管理 → 添加 VPN 配置 → 类型选 <b>L2TP/IPSec</b> → 服务器=节点 IP、账户=vpn、密码=vpn、密钥=<b>vpn</b> → 完成 → 连接。</li>
-      <li><b>② Android（分系统版本）</b>：设置 → 网络与互联网/连接 → VPN → 添加（＋）→ 类型选 <b>L2TP/IPSec PSK</b> → 服务器=节点 IP、PSK=<b>vpn</b>、账密=vpn/vpn → 连接。<br/>⚠️ 原生 Android 12+ 已移除 L2TP 选项；国产 ROM（MIUI/HarmonyOS/ColorOS/OriginOS 等）一般保留，若类型列表没有 L2TP，请改用 OpenVPN 方式（iOS/Android 标签页）或 iOS/Windows/Linux。</li>
-      <li><b>③ Windows（10/11）</b>：以管理员身份打开 PowerShell，运行下方「复制 Windows 创建命令」（内置注册表 NAT 补丁 AssumeUDPEncapsulationContext=2，国内网络必填），再运行「复制 Windows 连接命令」。<br/>手动方式：设置 → 网络和 Internet → VPN → 添加 VPN 连接 → VPN 类型 <b>L2TP/IPsec</b> → 预共享密钥 <b>vpn</b> → 账密 vpn/vpn → 连接。</li>
-      <li><b>④ macOS</b>：系统设置 → 网络 → VPN → 添加 VPN 配置 → 类型 <b>L2TP over IPsec</b> → 服务器=节点 IP、账户=vpn、密码=vpn → 认证设置里选「共享的密钥」并填 <b>vpn</b> → 连接。</li>
-      <li><b>⑤ Linux</b>：下方「复制 Linux 创建命令」自动安装 network-manager-l2tp 并创建连接（含 IPsec PSK vpn）。<br/>无桌面环境（纯 CLI）：<code>sudo apt install -y xl2tpd strongswan</code>，在 /etc/ipsec.conf 设密钥 vpn、/etc/xl2tpd/xl2tpd.conf 指向节点 IP 后拨号。</li>
-    </ol>
-    <div class="section-title">常用命令</div>
-    <div class="pf-cmd"><div class="code-box">New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\PolicyAgent" -Name AssumeUDPEncapsulationContext -Value 2 -PropertyType DWORD -Force | Out-Null; Add-VpnConnection -Name "vpngate" -ServerAddress 节点IP -TunnelType L2tp -L2tpPsk "vpn" -AuthenticationMethod PAP -EncryptionLevel Optional -Force -RememberCredential; rasdial "vpngate" vpn vpn</div>
-      <button class="btn btn-sm" data-pf-copy="New-ItemProperty -Path &quot;HKLM:\SYSTEM\CurrentControlSet\Services\PolicyAgent&quot; -Name AssumeUDPEncapsulationContext -Value 2 -PropertyType DWORD -Force | Out-Null; Add-VpnConnection -Name &quot;vpngate&quot; -ServerAddress 节点IP -TunnelType L2tp -L2tpPsk &quot;vpn&quot; -AuthenticationMethod PAP -EncryptionLevel Optional -Force -RememberCredential; rasdial &quot;vpngate&quot; vpn vpn">复制</button>
-    </div>
-    <div class="pf-cmd" style="margin-top:8px"><div class="code-box">sudo apt install -y network-manager-l2tp && nmcli connection add type l2tp con-name "vpngate" l2tp.gateway 节点IP l2tp.username vpn l2tp.password vpn ipsec.psk vpn ipsec.enable yes && nmcli connection up "vpngate"</div>
-      <button class="btn btn-sm" data-pf-copy="sudo apt install -y network-manager-l2tp && nmcli connection add type l2tp con-name &quot;vpngate&quot; l2tp.gateway 节点IP l2tp.username vpn l2tp.password vpn ipsec.psk vpn ipsec.enable yes && nmcli connection up &quot;vpngate&quot;">复制</button>
-    </div>
-    <div class="section-title">常见问题</div>
-    <ol class="steps">
-      <li>① 连不上 → 换节点重试（L2TP 非所有节点都开启）或换网络（WiFi↔流量）；</li>
-      <li>② Windows 报 789/691 → 确认注册表补丁已加、账密为 <b>vpn/vpn</b>；</li>
-      <li>③ iOS 提示「IPsec 连接失败」→ 确认密钥 PSK 填 <b>vpn</b>、类型为 L2TP/IPSec；</li>
-      <li>④ 速度慢/频繁断开 → 在优选列表选评分高、在线时间长（如 100+ 天）的节点；</li>
-      <li>⑤ 节点 IP 以优选卡片/列表为准，替换命令中的「节点IP」占位。</li>
-    </ol>`;
+    <ol class="steps">${steps.map((st) => `<li>${st}</li>`).join('')}</ol>
+    <div class="section-title">快捷命令（替换占位后使用）</div>
+    <div class="pf-cmd"><div class="code-box">${esc(winCmd)}</div>
+      <button class="btn btn-sm" data-pf-copy="${esc(winCmd)}">复制</button></div>
+    <div class="pf-cmd" style="margin-top:8px"><div class="code-box">${esc(linuxL2tp)}</div>
+      <button class="btn btn-sm" data-pf-copy="${esc(linuxL2tp)}">复制</button></div>
+    <div class="pf-cmd" style="margin-top:8px"><div class="code-box">${esc(winOvpn)}</div>
+      <button class="btn btn-sm" data-pf-copy="${esc(winOvpn)}">复制</button></div>
+    <div class="pf-cmd" style="margin-top:8px"><div class="code-box">${esc(linuxOvpn)}</div>
+      <button class="btn btn-sm" data-pf-copy="${esc(linuxOvpn)}">复制</button></div>`;
   document.getElementById('guideMask').hidden = false;
   document.querySelectorAll('#guideBody [data-pf-copy]').forEach((b) => {
     b.addEventListener('click', () => copyText(b.dataset.pfCopy, '已复制'));
