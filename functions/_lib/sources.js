@@ -37,6 +37,8 @@ export function parseRemotePortProto(configBase64) {
 
 /** 数据源缓存命名空间前缀 */
 const CACHE_PREFIX = 'https://vpngate.local/cache/';
+/** 服务器数据结构版本：结构变更（新增字段等）时 bump，避免旧缓存无新字段 */
+const SERVERS_DATA_VERSION = 2;
 
 // ==================== 拉取 ====================
 
@@ -219,7 +221,7 @@ export function normalizeServers(rawServers) {
  */
 export async function getServers(env, config, opts = {}) {
   const sig = await sha1Hex(JSON.stringify(config.dataSources) + '|' + config.fetch.maxServers);
-  const cacheKey = CACHE_PREFIX + 'servers/' + sig;
+  const cacheKey = CACHE_PREFIX + `servers/v${SERVERS_DATA_VERSION}/` + sig;
   const ttl = config.fetch.cacheSeconds;
 
   if (!opts.force) {
