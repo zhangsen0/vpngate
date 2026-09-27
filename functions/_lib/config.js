@@ -108,7 +108,7 @@ export const DEFAULTS = {
     ports: [443],
     /** 单端口超时(ms) */
     timeoutMs: 3000,
-    /** 快速失败判定(ms)：小于该值视为连接被拒绝(RST) 标记不可达；其余失败视为端口有服务（TCP 已建立） */
+    /** （兼容保留，不再参与判定）旧判定曾把快速失败视为端口拒绝 */
     fastFailMs: 1200,
     /** 实测节点数上限（按评分取前 N 名实测，避免几百个节点全部探测过慢） */
     maxNodes: 120,
@@ -212,7 +212,6 @@ export const SCHEMA = [
   { key: 'localProbe.ports', group: '本机实测', label: '实测端口列表(仅 TCP)', type: 'arrayNumber',
     placeholder: '443' },
   { key: 'localProbe.timeoutMs', group: '本机实测', label: '实测单端口超时(ms)', type: 'int', min: 500, max: 10000, unit: 'ms' },
-  { key: 'localProbe.fastFailMs', group: '本机实测', label: '快速失败阈值(ms, 视为端口拒绝)', type: 'int', min: 200, max: 5000, unit: 'ms' },
   { key: 'localProbe.maxNodes', group: '本机实测', label: '实测节点数上限(按评分取前 N)', type: 'int', min: 5, max: 500 },
   { key: 'probe.ports', group: '连通性探测', label: '探测端口列表', type: 'arrayNumber',
     hint: '如 [443,1194,5555,992]，按序探测取首个成功' },

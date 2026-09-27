@@ -433,7 +433,7 @@ function renderOptCards(ranked, data, results) {
     }
     return r.reachable
       ? `<span class="chip ok">本机✓ ${r.rttMs}ms</span>`
-      : `<span class="chip bad">本机✗ ${r.why === 'refused' ? '拒绝' : r.why === 'timeout' ? '超时' : ''}</span>`;
+      : `<span class="chip bad">本机✗ ${r.why === 'timeout' ? '超时' : ''}</span>`;
   };
   const body = document.getElementById('optBody');
   body.innerHTML = `
@@ -459,9 +459,9 @@ function renderOptCards(ranked, data, results) {
           </div>
         </div>
       </div>`).join('')}
-    <div class="section-title">「本机实测」用你的浏览器直连各节点 TCP 端口（不另开窗口），
-      筛掉 CF 边缘可达但本机连不上的节点，然后对可达节点重新评分排序；
-      实测范围 = 全部节点按评分取前 ${maxNodes} 名（配置 → 本机实测可调）。</div>`;
+    <div class="section-title">「本机实测」用你的浏览器直连各节点 TCP 端口（不另开窗口）：
+      仅「连接超时」判为本机不可达（TCP 未建立），
+      端口有响应（含协议断开/证书错误）即视为本机可达；实测范围 = 全部节点按评分取前 ${maxNodes} 名（配置 → 本机实测可调）。</div>`;
   document.querySelectorAll('[data-act="opt-ovpn"]').forEach((btn) => {
     btn.addEventListener('click', () => downloadOvpn(btn.dataset.id));
   });
@@ -479,7 +479,7 @@ function renderOptCards(ranked, data, results) {
 }
 
 /** 对单个 IP 做浏览器直连 TCP 探测（https 探测：TLS 失败但 TCP 建立 = 端口有服务） */
-async function probeLocalIp(ip, ports, timeoutMs, fastFailMs) {
+async function probeLocalIp(ip, ports, timeoutMs) {
   for (const port of ports) {
     const t0 = performance.now();
     const ctrl = new AbortController();
@@ -493,9 +493,12 @@ async function probeLocalIp(ip, ports, timeoutMs, fastFailMs) {
     } catch (e) {
       clearTimeout(timer);
       const dt = Math.round(performance.now() - t0);
+      // 只有超时才是真正的不可达（TCP 未建立：被墙/丢包/端口无响应）。
+      // 任何非超时的失败（无论快慢）都发生在 TCP 建立之后——
+      // 说明端口有服务在响应（OpenVPN 收到 TLS 请求后断开、证书错误等）→ 视为可达。
+      // 旧逻辑把「快速失败=端口拒绝」误判为不可达，会误杀真实可达节点（VPNGate 443 常见快速断开）。
       if (e.name === 'AbortError' || e.name === 'TimeoutError') continue; // 超时，试下一端口
-      if (dt < fastFailMs) return { reachable: false, rttMs: dt, why: 'refused' }; // 快速失败 = 连接被拒
-      return { reachable: true, rttMs: dt, why: 'tls' }; // 慢失败 = TCP 已建立（TLS/协议不匹配）
+      return { reachable: true, rttMs: dt, why: 'resp' };
     }
   }
   return { reachable: false, rttMs: null, why: 'timeout' };
@@ -517,7 +520,6 @@ async function localProbeAll(ranked, data, prevResults) {
     .slice(0, maxNodes);
   const ports = (lp.ports || [443]).slice(0, 2);
   const timeoutMs = lp.timeoutMs || 3000;
-  const fastFailMs = lp.fastFailMs || 1200;
 
   const body = document.getElementById('optBody');
   body.innerHTML = `<div class="section-title">🔍 本机实测中（共 ${pool.length} 个节点，浏览器直连 TCP 端口，请保持页面打开）…</div>
@@ -538,7 +540,7 @@ async function localProbeAll(ranked, data, prevResults) {
     workers.push((async () => {
       while (idx < pool.length) {
         const s = pool[idx++];
-        const r = await probeLocalIp(s.ip, ports, timeoutMs, fastFailMs);
+        const r = await probeLocalIp(s.ip, ports, timeoutMs);
         results.set(s.id, r);
         done++; if (r.reachable) ok++;
         if (done % 5 === 0 || done === pool.length) tick();
