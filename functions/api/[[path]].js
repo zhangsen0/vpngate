@@ -148,11 +148,12 @@ async function route(method, path, request, env) {
     if (!(await isAuthed(request, env))) return json({ ok: false, error: '未授权' }, 401);
     const body = await readJson(request).catch(() => null);
     const { config } = await loadConfig(env);
-    const maxNodes = Math.min(Math.max(Number((config.ovpnProbe || {}).maxNodes) || 40, 1), 80);
+    // CF 单请求子请求受限：单次探测最多 25 个，前端分批调用
+    const maxNodes = Math.min(Math.max(Number((config.ovpnProbe || {}).maxNodes) || 25, 1), 25);
     const mode = body && body.mode === 'https' ? 'https' : 'ovpn';
     let targets = [];
-    const ids = Array.isArray(body && body.ids) ? body.ids.map(String).slice(0, 80) : [];
-    const ips = Array.isArray(body && body.ips) ? body.ips.map(String).slice(0, 80) : [];
+    const ids = Array.isArray(body && body.ids) ? body.ids.map(String).slice(0, 25) : [];
+    const ips = Array.isArray(body && body.ips) ? body.ips.map(String).slice(0, 25) : [];
     if (ids.length) {
       const { servers: all } = await getServers(env, config);
       const byId = new Map(all.map((x) => [x.id, x]));

@@ -432,9 +432,12 @@ function renderOptCards(ranked, data, results) {
         : lc.reachable ? `<span class="chip ok">本机✓ ${lc.rttMs}ms</span>` : '<span class="chip bad">本机✗</span>';
     }
     if (r.udp) return `<span class="chip warn" title="UDP 端口浏览器无法探测，需试连">UDP 未测·试连</span>`;
-    return r.reachable
-      ? `<span class="chip ok">本机✓ ${r.rttMs}ms</span>`
-      : `<span class="chip bad">本机✗ 超时</span>`;
+    if (!r.reachable) return `<span class="chip bad">本机✗ 超时</span>`;
+    // 叠加 CF 边缘 OpenVPN 服务探测结果（确认 443 上 OpenVPN 服务真实在线）
+    let svc = '';
+    if (r.service === true) svc = `<span class="chip ok" title="CF 边缘已发 OpenVPN 握手帧，服务确认在线">服务✓</span>`;
+    else if (r.service === false) svc = `<span class="chip bad" title="CF 边缘探测：该节点 443 未响应 OpenVPN 握手（连不上主因）">服务✗</span>`;
+    return `<span class="chip ok">本机✓ ${r.rttMs}ms</span>${svc}`;
   };
   // 实测 RTT/端口优先取本机实测结果（ids 模式服务端不返回实测 RTT，避免“毫秒缺失”）
   const lrOf = (id) => results && results.get(id);
@@ -535,6 +538,28 @@ async function probeLocalServer(s, fallbackPorts, timeoutMs) {
  * 并附带展示评分前 N 个 UDP 候选（需试连）。
  * 防全不可达：TCP 实测 0 可达时自动回退到 CF 边缘结果并警示。
  */
+/** CF 边缘 OpenVPN 服务探测（分批 ≤25/请求，防 CF 子请求限制）。
+ *  浏览器无法发 OpenVPN 首包，由 CF 边缘代发 HARD_RESET 帧确认服务在线。
+ *  @returns {Promise<Object<string, {online: boolean, rttMs: number|null}>>} */
+async function probeOvpnService(ids) {
+  const out = {};
+  const cfg = state.config.ovpnProbe || {};
+  if (cfg.enabled === false || !ids.length) return out;
+  const batch = 25;
+  try {
+    for (let i = 0; i < ids.length; i += batch) {
+      const part = ids.slice(i, i + batch);
+      const res = await api('/api/probe-ovpn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: part }),
+      });
+      if (res && res.results) Object.assign(out, res.results);
+    }
+  } catch (e) { console.warn('ovpn 服务探测失败', e); }
+  return out;
+}
+
 async function localProbeAll(ranked, data, prevResults) {
   const lp = state.config.localProbe || {};
   if (lp.enabled === false) { toast('本机实测未启用（可在 配置 → 本机实测 打开）', 'err'); return; }
@@ -586,6 +611,18 @@ async function localProbeAll(ranked, data, prevResults) {
       if (s) udpCandidates.push(s);
     }
   });
+  // CF 边缘 OpenVPN 服务真实探测（仅对可达集合，确认 443 上 OpenVPN 服务在线，
+  // 筛掉"端口通但没开 OpenVPN"的节点——本机✓ 却连不上的主因）；结果写入 results 供卡片展示
+  if (reachableIds.length > 0) {
+    body.innerHTML = '<div class="empty">正在用 CF 边缘确认 ' + reachableIds.length + ' 个可达节点的 OpenVPN 服务状态…</div>';
+    try {
+      const svc = await probeOvpnService(reachableIds);
+      for (const [id, v] of Object.entries(svc)) {
+        const cur = results.get(id);
+        if (cur && typeof v.online === 'boolean') cur.service = v.online;
+      }
+    } catch (e) { console.warn('服务探测异常', e); }
+  }
   // 只要 ≥1 个本机可达就采用本机结果（用户只需 1~2 个能连的节点）；
   // 仅 0 可达时回退 CF 边缘结果并警示（防全不可达：永远有结果可看）
   if (reachableIds.length === 0) {
