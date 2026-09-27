@@ -973,6 +973,40 @@ function pfPanelHtml(platform, url, label) {
     <div class="pf-tabs">${tabHtml}</div>${panelHtml}`;
 }
 
+/** 打开主页「L2TP 指南」弹窗：全平台 L2TP/IPsec 使用说明（通用版，不绑定具体节点）。 */
+function openGuideModal() {
+  const body = document.getElementById('guideBody');
+  body.innerHTML = `
+    <div class="section-title">统一参数（所有平台一致）</div>
+    <div class="lc-hint">服务器（Server）= <b>优选/列表里任意节点的 IP</b> · 类型 <b>L2TP/IPsec（PSK）</b> · 预共享密钥（PSK/Secret）<b>vpn</b> · 用户名/密码 <b>vpn / vpn</b></div>
+    <ol class="steps">
+      <li><b>① iOS（iPhone/iPad）</b>：设置 → 通用 → VPN 与设备管理 → 添加 VPN 配置 → 类型选 <b>L2TP/IPSec</b> → 服务器=节点 IP、账户=vpn、密码=vpn、密钥=<b>vpn</b> → 完成 → 连接。</li>
+      <li><b>② Android（分系统版本）</b>：设置 → 网络与互联网/连接 → VPN → 添加（＋）→ 类型选 <b>L2TP/IPSec PSK</b> → 服务器=节点 IP、PSK=<b>vpn</b>、账密=vpn/vpn → 连接。<br/>⚠️ 原生 Android 12+ 已移除 L2TP 选项；国产 ROM（MIUI/HarmonyOS/ColorOS/OriginOS 等）一般保留，若类型列表没有 L2TP，请改用 OpenVPN 方式（iOS/Android 标签页）或 iOS/Windows/Linux。</li>
+      <li><b>③ Windows（10/11）</b>：以管理员身份打开 PowerShell，运行下方「复制 Windows 创建命令」（内置注册表 NAT 补丁 AssumeUDPEncapsulationContext=2，国内网络必填），再运行「复制 Windows 连接命令」。<br/>手动方式：设置 → 网络和 Internet → VPN → 添加 VPN 连接 → VPN 类型 <b>L2TP/IPsec</b> → 预共享密钥 <b>vpn</b> → 账密 vpn/vpn → 连接。</li>
+      <li><b>④ macOS</b>：系统设置 → 网络 → VPN → 添加 VPN 配置 → 类型 <b>L2TP over IPsec</b> → 服务器=节点 IP、账户=vpn、密码=vpn → 认证设置里选「共享的密钥」并填 <b>vpn</b> → 连接。</li>
+      <li><b>⑤ Linux</b>：下方「复制 Linux 创建命令」自动安装 network-manager-l2tp 并创建连接（含 IPsec PSK vpn）。<br/>无桌面环境（纯 CLI）：<code>sudo apt install -y xl2tpd strongswan</code>，在 /etc/ipsec.conf 设密钥 vpn、/etc/xl2tpd/xl2tpd.conf 指向节点 IP 后拨号。</li>
+    </ol>
+    <div class="section-title">常用命令</div>
+    <div class="pf-cmd"><div class="code-box">New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\PolicyAgent" -Name AssumeUDPEncapsulationContext -Value 2 -PropertyType DWORD -Force | Out-Null; Add-VpnConnection -Name "vpngate" -ServerAddress 节点IP -TunnelType L2tp -L2tpPsk "vpn" -AuthenticationMethod PAP -EncryptionLevel Optional -Force -RememberCredential; rasdial "vpngate" vpn vpn</div>
+      <button class="btn btn-sm" data-pf-copy="New-ItemProperty -Path &quot;HKLM:\SYSTEM\CurrentControlSet\Services\PolicyAgent&quot; -Name AssumeUDPEncapsulationContext -Value 2 -PropertyType DWORD -Force | Out-Null; Add-VpnConnection -Name &quot;vpngate&quot; -ServerAddress 节点IP -TunnelType L2tp -L2tpPsk &quot;vpn&quot; -AuthenticationMethod PAP -EncryptionLevel Optional -Force -RememberCredential; rasdial &quot;vpngate&quot; vpn vpn">复制</button>
+    </div>
+    <div class="pf-cmd" style="margin-top:8px"><div class="code-box">sudo apt install -y network-manager-l2tp && nmcli connection add type l2tp con-name "vpngate" l2tp.gateway 节点IP l2tp.username vpn l2tp.password vpn ipsec.psk vpn ipsec.enable yes && nmcli connection up "vpngate"</div>
+      <button class="btn btn-sm" data-pf-copy="sudo apt install -y network-manager-l2tp && nmcli connection add type l2tp con-name &quot;vpngate&quot; l2tp.gateway 节点IP l2tp.username vpn l2tp.password vpn ipsec.psk vpn ipsec.enable yes && nmcli connection up &quot;vpngate&quot;">复制</button>
+    </div>
+    <div class="section-title">常见问题</div>
+    <ol class="steps">
+      <li>① 连不上 → 换节点重试（L2TP 非所有节点都开启）或换网络（WiFi↔流量）；</li>
+      <li>② Windows 报 789/691 → 确认注册表补丁已加、账密为 <b>vpn/vpn</b>；</li>
+      <li>③ iOS 提示「IPsec 连接失败」→ 确认密钥 PSK 填 <b>vpn</b>、类型为 L2TP/IPSec；</li>
+      <li>④ 速度慢/频繁断开 → 在优选列表选评分高、在线时间长（如 100+ 天）的节点；</li>
+      <li>⑤ 节点 IP 以优选卡片/列表为准，替换命令中的「节点IP」占位。</li>
+    </ol>`;
+  document.getElementById('guideMask').hidden = false;
+  document.querySelectorAll('#guideBody [data-pf-copy]').forEach((b) => {
+    b.addEventListener('click', () => copyText(b.dataset.pfCopy, '已复制'));
+  });
+}
+
 async function openPlatformModal(id) {
   const s = state.servers.find((x) => x.id === id) || {};
   const label = `vpngate-${s.countryShort || 'x'}-${s.ip || 'node'}`;
@@ -1313,6 +1347,8 @@ async function openLogs() {
 function bindEvents() {
   document.getElementById('btnRefresh').addEventListener('click', () => loadServers(true));
   document.getElementById('btnOptimize').addEventListener('click', runOptimize);
+  document.getElementById('btnGuide').addEventListener('click', openGuideModal);
+  document.getElementById('btnGuideClose').addEventListener('click', () => { document.getElementById('guideMask').hidden = true; });
   document.getElementById('btnConfig').addEventListener('click', () => {
     renderConfigForm();
     document.getElementById('cfgMask').hidden = false;
