@@ -62,14 +62,30 @@ export function scoreServer(s, config) {
  * @param {object} config - 生效配置
  * @param {Function} [probeFn] - 探测函数（默认 probeServer；单测可注入桩函数）
  * @param {number} [budgetMs] - 整体探测时间预算（默认 20000，平台 30s 墙钟内兜底）
+ * @param {object} [opts] - 可选：{ ids: string[] } 本机实测模式——只对给定 id 集合按静态权重评分排序，跳过边缘探测
  * @returns {Promise<{ranked: Array, probed: Array}>}
  */
-export async function runOptimize(servers, config, probeFn = probeServer, budgetMs = 15000) {
+export async function runOptimize(servers, config, probeFn = probeServer, budgetMs = 15000, opts = {}) {
   const filtered = applyFilters(servers, config);
 
   // 静态评分排序，取前 probeCount 名探测
   const withBase = filtered.map((s) => ({ ...s, baseScore: scoreServer(s, config) }));
   withBase.sort((a, b) => b.baseScore - a.baseScore);
+
+  // 本机实测模式：ids 集合已在浏览器直连筛过，直接按权重评分排序（跳过边缘探测）
+  if (opts && Array.isArray(opts.ids)) {
+    const inIds = new Set(opts.ids);
+    const probed = withBase.filter((s) => inIds.has(s.id))
+      .map((s) => ({ ...s, reachable: true, rttMs: null, port: null, score: s.baseScore }));
+    probed.sort((a, b) => b.score - a.score);
+    return {
+      ranked: probed.slice(0, config.optimize.topN),
+      probed: probed.map(({ id, hostname, ip, countryShort, baseScore, score, reachable, rttMs, port }) => ({
+        id, hostname, ip, countryShort, baseScore, score, reachable, rttMs, port,
+      })),
+    };
+  }
+
   const candidates = withBase.slice(0, config.probe.probeCount);
 
   // 并发探测：整体时间预算兜底，超时未返回的候选标记为不可达。

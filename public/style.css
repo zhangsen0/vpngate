@@ -483,3 +483,7 @@ tbody td { padding: 10px 14px; white-space: nowrap; vertical-align: middle; }
   .cfg-row > label { padding-top: 2px; }
   .drawer { width: 94vw; }
 }
+
+/* ===== 本机实测进度条 ===== */
+.probe-bar { height: 8px; background: color-mix(in srgb, var(--fg, #888) 12%, transparent); border-radius: 4px; overflow: hidden; margin: 10px 0; }
+.probe-bar-inner { height: 100%; width: 0; background: var(--ok, #30a46c); border-radius: 4px; transition: width .2s; }

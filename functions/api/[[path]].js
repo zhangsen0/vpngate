@@ -181,6 +181,7 @@ async function route(method, path, request, env) {
     const ovReq = typeof overrides.requireReachable === 'boolean' ? overrides.requireReachable : null;
     const ovProbeCount = overrides.probeCount ? Number.parseInt(overrides.probeCount, 10) : null;
     const ovRefresh = overrides.refresh === true || overrides.refresh === '1';
+    const ovIds = Array.isArray(overrides.ids) ? overrides.ids.filter((x) => typeof x === 'string' && x) : null;
     if (ovCountry) config.filters.enabledCountryCodes = ovCountry;
     if (ovTopN) config.optimize.topN = ovTopN;
     if (ovReq !== null) config.probe.requireReachable = ovReq;
@@ -194,7 +195,7 @@ async function route(method, path, request, env) {
       n: config.norm,
       p: { ports: config.probe.ports, timeoutMs: config.probe.timeoutMs, probeCount: config.probe.probeCount, concurrency: config.probe.concurrency, requireReachable: config.probe.requireReachable, reachableBoost: config.probe.reachableBoost },
       o: config.optimize.topN,
-      ov: { c: ovCountry, n: ovTopN, r: ovReq, pc: ovProbeCount, ref: ovRefresh },
+      ov: { c: ovCountry, n: ovTopN, r: ovReq, pc: ovProbeCount, ref: ovRefresh, ids: ovIds },
     }));
     const ttl = Math.max(0, config.optimize.cacheSeconds || 0);
     const cacheKey = `https://vpngate.local/cache/optimize/${sig}`;
@@ -209,8 +210,8 @@ async function route(method, path, request, env) {
     }
 
     const result = await getServers(env, config, { force: ovRefresh });
-    const { ranked, probed } = await runOptimize(result.servers, config);
-    log(env, 'optimize', `候选 ${probed.length} 个 / 达标 ${ranked.length} 个`, clientIp);
+    const { ranked, probed } = await runOptimize(result.servers, config, undefined, 15000, ovIds ? { ids: ovIds } : {});
+    log(env, 'optimize', ovIds ? `本机实测模式：id 集合 ${ovIds.length} 个 / 达标 ${ranked.length} 个` : `候选 ${probed.length} 个 / 达标 ${ranked.length} 个`, clientIp);
 
     if (ttl > 0) {
       try {

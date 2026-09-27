@@ -169,6 +169,29 @@ test('runOptimize：requireReachable=false 时保留不可连通节点且无加�
   assert.ok(ranked.every((r) => r.score === r.baseScore));
 });
 
+test('runOptimize：ids 本机实测模式——仅对给定 id 集合按静态权重评分排序，跳过探测', async () => {
+  const cfg = mergeConfig({ probe: { probeCount: 10, requireReachable: true }, optimize: { topN: 2 } });
+  const servers = sampleServers();
+  // 传入的 id 集合 = 本机浏览器实测可达的节点
+  const ids = ['public-vpn-1|1.1.1.1', 'public-vpn-3|3.3.3.3'];
+  const stub = async () => { throw new Error('本机实测模式不应调用边缘探测'); };
+  const { ranked, probed } = await runOptimize(servers, cfg, stub, 5000, { ids });
+  assert.ok(ranked.length > 0 && ranked.length <= 2, 'ids 模式应只返回 id 集合内节点');
+  assert.ok(ranked.every((r) => ids.includes(r.id)), '结果必须全部来自传入 ids');
+  assert.ok(probed.every((p) => ids.includes(p.id)), '候选也必须来自传入 ids');
+  assert.ok(ranked.every((r) => r.score === r.baseScore), 'ids 模式无探测加成');
+  // 排序按静态评分降序
+  const sorted = [...ranked].sort((a, b) => b.score - a.score);
+  assert.deepEqual(ranked.map((r) => r.id), sorted.map((r) => r.id), '按评分降序');
+});
+
+test('runOptimize：ids 集合为空时返回空结果（供前端回退边缘结果）', async () => {
+  const cfg = mergeConfig({ probe: { probeCount: 10 }, optimize: { topN: 2 } });
+  const stub = async () => ({ reachable: true, rttMs: 10, port: 443 });
+  const { ranked } = await runOptimize(sampleServers(), cfg, stub, 5000, { ids: ['not-exist'] });
+  assert.equal(ranked.length, 0, 'ids 与任何节点不匹配时应为空');
+});
+
 // ==================== OpenVPN 配置生成 ====================
 
 test('buildOvpn：base64 解码、remote 改写为 IP、附加选项追加', () => {

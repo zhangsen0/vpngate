@@ -101,6 +101,18 @@ export const DEFAULTS = {
     /** 归一化参考：会话数目标值（超过视为拥挤，越小越好） */
     sessionsTarget: 50,
   },
+  localProbe: {
+    /** 页面内浏览器直连实测：对优选 IP 逐个发起 https 探测（反映本机网络真实可达性） */
+    enabled: true,
+    /** 实测端口（仅 TCP；浏览器无法发 UDP，优先 443） */
+    ports: [443],
+    /** 单端口超时(ms) */
+    timeoutMs: 3000,
+    /** 快速失败判定(ms)：小于该值视为连接被拒绝(RST) 标记不可达；其余失败视为端口有服务（TCP 已建立） */
+    fastFailMs: 1200,
+    /** 实测节点数上限（按评分取前 N 名实测，避免几百个节点全部探测过慢） */
+    maxNodes: 120,
+  },
   probe: {
     /** 连通性探测端口列表（TCP），按序探测取首个成功 */
     ports: [443, 1194],
@@ -196,6 +208,12 @@ export const SCHEMA = [
   { key: 'norm.sessionsTarget', group: '归一化参考', label: '会话数目标值', type: 'int', min: 1, max: 10000 },
 
   // —— 连通性探测 ——
+  { key: 'localProbe.enabled', group: '本机实测', label: '启用页面内浏览器直连实测', type: 'boolean' },
+  { key: 'localProbe.ports', group: '本机实测', label: '实测端口列表(仅 TCP)', type: 'arrayNumber',
+    placeholder: '443' },
+  { key: 'localProbe.timeoutMs', group: '本机实测', label: '实测单端口超时(ms)', type: 'int', min: 500, max: 10000, unit: 'ms' },
+  { key: 'localProbe.fastFailMs', group: '本机实测', label: '快速失败阈值(ms, 视为端口拒绝)', type: 'int', min: 200, max: 5000, unit: 'ms' },
+  { key: 'localProbe.maxNodes', group: '本机实测', label: '实测节点数上限(按评分取前 N)', type: 'int', min: 5, max: 500 },
   { key: 'probe.ports', group: '连通性探测', label: '探测端口列表', type: 'arrayNumber',
     hint: '如 [443,1194,5555,992]，按序探测取首个成功' },
   { key: 'probe.timeoutMs', group: '连通性探测', label: '探测超时(ms)', type: 'int', min: 200, max: 10000, unit: 'ms' },
@@ -291,6 +309,11 @@ export function validateConfig(cfg) {
     config.norm[k] = Math.max(1, numOf(withDefault(`norm.${k}`, DEFAULTS.norm[k]), DEFAULTS.norm[k]));
   }
 
+  config.localProbe.enabled = boolOf(withDefault('localProbe.enabled', true), true);
+  config.localProbe.ports = intArrayOf(withDefault('localProbe.ports', [443])).filter((p) => p >= 1 && p <= 65535);
+  config.localProbe.timeoutMs = clamp(intOf(withDefault('localProbe.timeoutMs', 3000), 3000), 500, 10000);
+  config.localProbe.fastFailMs = clamp(intOf(withDefault('localProbe.fastFailMs', 1200), 1200), 200, 5000);
+  config.localProbe.maxNodes = clamp(intOf(withDefault('localProbe.maxNodes', 120), 120), 5, 500);
   config.probe.ports = intArrayOf(withDefault('probe.ports', [443, 1194])).filter((p) => p >= 1 && p <= 65535);
   if (config.probe.ports.length === 0) config.probe.ports = [443];
   config.probe.timeoutMs = clamp(intOf(withDefault('probe.timeoutMs', 2500), 2500), 200, 10000);

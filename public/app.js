@@ -389,51 +389,8 @@ async function runOptimize() {
         '<div class="empty">没有可用的优选结果：可尝试放宽筛选（如「仅保留可连通」开关）或刷新数据源。</div>';
       return;
     }
-    document.getElementById('optBody').innerHTML = `
-      <div class="section-title">共探测 ${(data.probed || []).length} 个候选，${ranked.length} 个达标节点（按最终评分排序）</div>
-      <div class="row-actions" style="margin-bottom:10px">
-        <button class="btn" data-act="opt-lc-all">本机校验全部 ${ranked.length} 个</button>
-      </div>
-      ${ranked.map((r, i) => {
-        const lc = state.local.results[r.id];
-        const lcChip = !lc
-          ? '<span class="chip dim">本机未测</span>'
-          : lc.reachable
-            ? `<span class="chip ok">本机✓ ${lc.rttMs}ms</span>`
-            : `<span class="chip bad">本机✗</span>`;
-        return `
-        <div class="opt-card">
-          <div class="opt-rank">${i + 1}</div>
-          <div class="opt-main">
-            <div class="row1"><span class="flag">${flagEmoji(r.countryShort)}</span><span class="ip">${esc(r.ip)}</span>
-              <span class="badge ok">${esc(r.hostname)}</span>${lcChip}</div>
-            <div class="row2">端口 ${r.port} · 基础分 ${r.baseScore.toFixed(3)} → ${r.score.toFixed(3)}</div>
-          </div>
-          <div class="opt-meta">
-            <div class="rtt">${r.reachable ? r.rttMs + 'ms' : '不可达'}</div>
-            <div style="margin-top:4px;display:flex;gap:6px;justify-content:flex-end">
-              <button class="btn btn-sm" data-act="opt-lc" data-id="${esc(r.id)}">本机校验</button>
-              <button class="btn btn-sm" data-act="opt-pf" data-id="${esc(r.id)}">多端</button>
-              <button class="btn btn-sm" data-act="opt-ovpn" data-id="${esc(r.id)}">下载配置</button>
-            </div>
-          </div>
-        </div>`;
-      }).join('')}
-      <div class="section-title">说明：RTT 为 Cloudflare 边缘到节点的 TCP 握手延迟，作为可达性参考；
-        「本机校验」用于确认你的本机网络是否可达（防止 CF 可达但本机不可达）。</div>`;
-    // 绑定下载与本机校验
-    document.querySelectorAll('[data-act="opt-ovpn"]').forEach((btn) => {
-      btn.addEventListener('click', () => downloadOvpn(btn.dataset.id));
-    });
-    document.querySelectorAll('[data-act="opt-pf"]').forEach((btn) => {
-      btn.addEventListener('click', () => openPlatformModal(btn.dataset.id));
-    });
-    document.querySelectorAll('[data-act="opt-lc"]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const s = state.servers.find((x) => x.id === btn.dataset.id);
-        if (s) openLcModal([lcTargetFromServer(s)]);
-      });
-    });
+    // 渲染（本机实测结果可为空）；renderOptCards 内部已绑定按钮事件
+    renderOptCards(ranked, data, null);
     const lcAllBtn = document.querySelector('[data-act="opt-lc-all"]');
     if (lcAllBtn) {
       lcAllBtn.addEventListener('click', () => {
@@ -453,6 +410,163 @@ async function runOptimize() {
       : `<div class="empty">优选失败：${esc(e.message)}</div>`;
   } finally {
     clearTimeout(failTimer);
+  }
+}
+
+/** 渲染优选结果卡片。results: Map<id, {reachable,rttMs,why}> 或 null（未做本机实测） */
+function renderOptCards(ranked, data, results) {
+  const lp = state.config.localProbe || {};
+  const maxNodes = lp.maxNodes || 120;
+  const lcChipOf = (id) => {
+    const r = results && results.get(id);
+    if (!r) {
+      const lc = state.local.results[id];
+      return !lc ? '<span class="chip dim">本机未测</span>'
+        : lc.reachable ? `<span class="chip ok">本机✓ ${lc.rttMs}ms</span>` : '<span class="chip bad">本机✗</span>';
+    }
+    return r.reachable
+      ? `<span class="chip ok">本机✓ ${r.rttMs}ms</span>`
+      : `<span class="chip bad">本机✗ ${r.why === 'refused' ? '拒绝' : r.why === 'timeout' ? '超时' : ''}</span>`;
+  };
+  const body = document.getElementById('optBody');
+  body.innerHTML = `
+    <div class="section-title">${data.mode === 'local' ? '本机实测可达节点（按权重评分排序）' : `CF 边缘探测 ${(data.probed || []).length} 个候选，${ranked.length} 个达标节点（按最终评分排序）`}</div>
+    <div class="row-actions" style="margin-bottom:10px">
+      <button class="btn btn-primary" data-act="opt-probe">🔍 本机实测 Top ${maxNodes}（页面内直连）</button>
+      <button class="btn" data-act="opt-lc-all">本机校验全部 ${ranked.length} 个</button>
+    </div>
+    ${ranked.map((r, i) => `
+      <div class="opt-card">
+        <div class="opt-rank">${i + 1}</div>
+        <div class="opt-main">
+          <div class="row1"><span class="flag">${flagEmoji(r.countryShort)}</span><span class="ip">${esc(r.ip)}</span>
+            <span class="badge ok">${esc(r.hostname)}</span>${lcChipOf(r.id)}</div>
+          <div class="row2">端口 ${r.port || r.ports || '-'} · 基础分 ${(r.baseScore || 0).toFixed(3)} → ${(r.score || 0).toFixed(3)}</div>
+        </div>
+        <div class="opt-meta">
+          <div class="rtt">${r.reachable ? (r.rttMs || '') + 'ms' : '不可达'}</div>
+          <div style="margin-top:4px;display:flex;gap:6px;justify-content:flex-end">
+            <button class="btn btn-sm" data-act="opt-lc" data-id="${esc(r.id)}">本机校验</button>
+            <button class="btn btn-sm" data-act="opt-pf" data-id="${esc(r.id)}">多端</button>
+            <button class="btn btn-sm" data-act="opt-ovpn" data-id="${esc(r.id)}">下载配置</button>
+          </div>
+        </div>
+      </div>`).join('')}
+    <div class="section-title">「本机实测」用你的浏览器直连各节点 TCP 端口（不另开窗口），
+      筛掉 CF 边缘可达但本机连不上的节点，然后对可达节点重新评分排序；
+      实测范围 = 全部节点按评分取前 ${maxNodes} 名（配置 → 本机实测可调）。</div>`;
+  document.querySelectorAll('[data-act="opt-ovpn"]').forEach((btn) => {
+    btn.addEventListener('click', () => downloadOvpn(btn.dataset.id));
+  });
+  document.querySelectorAll('[data-act="opt-pf"]').forEach((btn) => {
+    btn.addEventListener('click', () => openPlatformModal(btn.dataset.id));
+  });
+  document.querySelectorAll('[data-act="opt-lc"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const s = state.servers.find((x) => x.id === btn.dataset.id);
+      if (s) openLcModal([lcTargetFromServer(s)]);
+    });
+  });
+  const probeBtn = document.querySelector('[data-act="opt-probe"]');
+  if (probeBtn) probeBtn.addEventListener('click', () => localProbeAll(ranked, data, results));
+}
+
+/** 对单个 IP 做浏览器直连 TCP 探测（https 探测：TLS 失败但 TCP 建立 = 端口有服务） */
+async function probeLocalIp(ip, ports, timeoutMs, fastFailMs) {
+  for (const port of ports) {
+    const t0 = performance.now();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      await fetch(`https://${ip}:${port}/`, {
+        mode: 'no-cors', cache: 'no-store', signal: ctrl.signal, referrerPolicy: 'no-referrer',
+      });
+      clearTimeout(timer);
+      return { reachable: true, rttMs: Math.round(performance.now() - t0), port };
+    } catch (e) {
+      clearTimeout(timer);
+      const dt = Math.round(performance.now() - t0);
+      if (e.name === 'AbortError' || e.name === 'TimeoutError') continue; // 超时，试下一端口
+      if (dt < fastFailMs) return { reachable: false, rttMs: dt, why: 'refused' }; // 快速失败 = 连接被拒
+      return { reachable: true, rttMs: dt, why: 'tls' }; // 慢失败 = TCP 已建立（TLS/协议不匹配）
+    }
+  }
+  return { reachable: false, rttMs: null, why: 'timeout' };
+}
+
+/**
+ * 本机实测：用总节点（按评分取前 maxNodes）在浏览器直连筛一遍，
+ * 标出本机可达/不可达；之后「仅看本机可达并重新评分」。
+ * 防全不可达：可达数不足时自动回退到 CF 边缘结果并警示。
+ */
+async function localProbeAll(ranked, data, prevResults) {
+  const lp = state.config.localProbe || {};
+  if (lp.enabled === false) { toast('本机实测未启用（可在 配置 → 本机实测 打开）', 'err'); return; }
+  const maxNodes = Math.max(5, Math.min(500, lp.maxNodes || 120));
+  // 用总节点按评分粗排取前 N：不依赖 CF 边缘筛出的候选，防止边缘全可达但本机全不可达
+  const pool = [...state.servers]
+    .filter((s) => s.ip)
+    .sort((a, b) => (b.score || 0) - (a.score || 0) || (a.pingMs || 1e9) - (b.pingMs || 1e9))
+    .slice(0, maxNodes);
+  const ports = (lp.ports || [443]).slice(0, 2);
+  const timeoutMs = lp.timeoutMs || 3000;
+  const fastFailMs = lp.fastFailMs || 1200;
+
+  const body = document.getElementById('optBody');
+  body.innerHTML = `<div class="section-title">🔍 本机实测中（共 ${pool.length} 个节点，浏览器直连 TCP 端口，请保持页面打开）…</div>
+    <div class="probe-bar"><div class="probe-bar-inner" id="probeBarInner" style="width:0%"></div></div>
+    <div class="empty" id="probeStatus">已测 0 / ${pool.length}，本机可达 0…</div>`;
+
+  const results = new Map();
+  const CONC = 8;
+  let idx = 0, done = 0, ok = 0;
+  const barInner = document.getElementById('probeBarInner');
+  const statusEl = document.getElementById('probeStatus');
+  const tick = () => {
+    barInner.style.width = Math.round((done / pool.length) * 100) + '%';
+    statusEl.textContent = `已测 ${done} / ${pool.length}，本机可达 ${ok}，不可达 ${done - ok}…`;
+  };
+  const workers = [];
+  for (let w = 0; w < CONC; w++) {
+    workers.push((async () => {
+      while (idx < pool.length) {
+        const s = pool[idx++];
+        const r = await probeLocalIp(s.ip, ports, timeoutMs, fastFailMs);
+        results.set(s.id, r);
+        done++; if (r.reachable) ok++;
+        if (done % 5 === 0 || done === pool.length) tick();
+      }
+    })());
+  }
+  await Promise.all(workers);
+  tick();
+
+  const reachableIds = [];
+  results.forEach((v, id) => { if (v.reachable) reachableIds.push(id); });
+  const minOk = Math.max(3, Math.min(state.config.optimize.topN || 8, 5));
+  if (reachableIds.length < minOk) {
+    // 防全不可达：回退到 CF 边缘结果，标注实测状态并警示
+    renderOptCards(ranked, data, results);
+    body.insertAdjacentHTML('afterbegin', `<div class="empty" style="color:var(--err,#e5484d);margin-bottom:8px">
+      ⚠️ 本机实测仅 ${reachableIds.length} / ${pool.length} 个可达（不足 ${minOk} 个），已回退展示 CF 边缘探测结果；
+      带「本机✗」的节点可能连不上，可放宽筛选或稍后再试。</div>`);
+    toast(`本机实测仅 ${reachableIds.length} 个可达，已回退边缘结果`, 'err');
+    return;
+  }
+  // 对可达集合重新评分（服务端按权重排序，跳过边缘探测）
+  body.innerHTML = '<div class="empty">正在对 ' + reachableIds.length + ' 个本机可达节点按权重重新评分…</div>';
+  try {
+    const d2 = await api('/api/optimize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: reachableIds }),
+    });
+    renderOptCards(d2.ranked || [], { ...data, mode: 'local', probed: d2.probed }, results);
+    body.insertAdjacentHTML('afterbegin', `<div class="section-title" style="color:var(--ok,#30a46c)">
+      ✅ 本机实测 ${pool.length} 个节点：可达 ${reachableIds.length} 个，已按权重重新评分（筛选结果优先本机可达）。</div>`);
+  } catch (e) {
+    renderOptCards(ranked, data, results);
+    body.insertAdjacentHTML('afterbegin', `<div class="empty" style="color:var(--err,#e5484d);margin-bottom:8px">重新评分失败（${esc(e.message)}），已保留实测标记。</div>`);
   }
 }
 
