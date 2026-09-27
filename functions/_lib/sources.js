@@ -28,17 +28,17 @@ export function parseRemotePortProto(configBase64) {
   try {
     const raw = atob(configBase64);
     // remote 行两种格式：`remote <host> <port>`（协议在单独 proto 指令）或 `remote <host> <port> <tcp|udp>`
-    const m = raw.match(/^remote\s+\S+\s+(\d+)(?:\s+(\w+))?/m);
+    const m = raw.match(/^remote[ \t]+\S+[ \t]+(\d+)(?:[ \t]+(\w+))?/m);
     if (m) {
       const port = Number.parseInt(m[1], 10);
       let proto = m[2] ? m[2].toLowerCase() : null;
       if (!proto) {
-        const pm = raw.match(/^proto\s+(\w+)/m); // 单独 proto 指令，如 proto udp
+        const pm = raw.match(/^proto[ \t]+(\w+)/m); // 单独 proto 指令，如 proto udp
         if (pm) proto = pm[1].toLowerCase();
       }
       return { port, proto };
     }
-    const m2 = raw.match(/^port\s+(\d+)/m); // 无 remote 时回退 port 指令
+    const m2 = raw.match(/^port[ \t]+(\d+)/m); // 无 remote 时回退 port 指令
     if (m2) return { port: Number.parseInt(m2[1], 10), proto: null };
   } catch { /* base64 解码失败则忽略 */ }
   return { port: null, proto: null };
