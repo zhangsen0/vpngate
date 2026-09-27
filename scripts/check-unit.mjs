@@ -349,6 +349,11 @@ test('signFileToken/verifyFileToken：签名有效、id 绑定、过期拒绝、
   assert.equal(await signFileToken({}, id, 60000), null);
 });
 
+test('validateConfig：ovpn.appendOptions 保留原大小写（不转大写）', () => {
+  const { config } = validateConfig({ ovpn: { appendOptions: ['data-ciphers AES-128-CBC', 'auth-nocache', 'BLOCK-OUTSIDE-DNS'] } });
+  assert.deepEqual(config.ovpn.appendOptions, ['data-ciphers AES-128-CBC', 'auth-nocache', 'BLOCK-OUTSIDE-DNS'], '大小写应原样保留');
+});
+
 // ==================== 节点快照缓存 ====================
 
 test('rememberServer/findServerSnapshot：写入可查、过期清理、未过期保留', async () => {

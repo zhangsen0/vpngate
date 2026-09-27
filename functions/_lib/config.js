@@ -300,7 +300,7 @@ export function validateConfig(cfg) {
   config.optimize.cacheSeconds = clamp(intOf(withDefault('optimize.cacheSeconds', 30), 30), 0, 3600);
 
   config.ovpn.rewriteRemoteToIp = boolOf(withDefault('ovpn.rewriteRemoteToIp', true), true);
-  config.ovpn.appendOptions = strArrayOf(withDefault('ovpn.appendOptions', []));
+  config.ovpn.appendOptions = strArrayKeep(withDefault('ovpn.appendOptions', []));
   config.ovpn.linkTokenTtlSeconds = clamp(intOf(withDefault('ovpn.linkTokenTtlSeconds', 600), 600), 30, 86400);
 
   config.ui.theme = ['dark', 'light'].includes(withDefault('ui.theme', 'dark')) ? config.ui.theme : 'dark';
@@ -353,6 +353,20 @@ function strArrayOf(v) {
       /* 忽略非法 JSON，按逗号拆分 */
     }
     return v.split(/[,，\s]+/).filter(Boolean).map((x) => x.toUpperCase());
+  }
+  return [];
+}
+/** 字符串数组：保留原大小写（用于 OpenVPN 附加选项等大小写敏感配置） */
+function strArrayKeep(v) {
+  if (Array.isArray(v)) return v.filter((x) => typeof x === 'string').map((x) => x.trim()).filter(Boolean);
+  if (typeof v === 'string' && v.trim()) {
+    try {
+      const parsed = JSON.parse(v);
+      if (Array.isArray(parsed)) return strArrayKeep(parsed);
+    } catch {
+      /* 忽略非法 JSON，按逗号拆分 */
+    }
+    return v.split(/[,，\s]+/).filter(Boolean);
   }
   return [];
 }
