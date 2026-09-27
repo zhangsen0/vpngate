@@ -318,7 +318,14 @@ async function probeServerById(id) {
 
 async function downloadOvpn(id) {
   try {
-    const res = await fetch(`/api/ovpn?id=${encodeURIComponent(id)}`);
+    // 先取免登录带 token 链接（服务端同时把该节点写入快照，节点下线后 30 分钟内仍可下载），
+    // 再按链接下载——避免直接 /api/ovpn?id= 因列表刷新节点下线而 404。
+    const linkRes = await fetch(`/api/ovpn-url?id=${encodeURIComponent(id)}`);
+    const linkData = await linkRes.json().catch(() => null);
+    if (!linkRes.ok || !linkData || !linkData.url) {
+      throw new Error((linkData && linkData.error) || `生成下载链接失败（HTTP ${linkRes.status}）`);
+    }
+    const res = await fetch(linkData.url);
     if (!res.ok) {
       const d = await res.json().catch(() => null);
       throw new Error((d && d.error) || `HTTP ${res.status}`);
@@ -543,14 +550,15 @@ async function localProbeAll(ranked, data, prevResults) {
 
   const reachableIds = [];
   results.forEach((v, id) => { if (v.reachable) reachableIds.push(id); });
-  const minOk = Math.max(3, Math.min(state.config.optimize.topN || 8, 5));
-  if (reachableIds.length < minOk) {
+  // 只要 ≥1 个本机可达就采用本机结果（用户只需 1~2 个能连的节点）；
+  // 仅 0 可达时回退 CF 边缘结果并警示（防全不可达：永远有结果可看）
+  if (reachableIds.length === 0) {
     // 防全不可达：回退到 CF 边缘结果，标注实测状态并警示
     renderOptCards(ranked, data, results);
     body.insertAdjacentHTML('afterbegin', `<div class="empty" style="color:var(--err,#e5484d);margin-bottom:8px">
-      ⚠️ 本机实测仅 ${reachableIds.length} / ${pool.length} 个可达（不足 ${minOk} 个），已回退展示 CF 边缘探测结果；
-      带「本机✗」的节点可能连不上，可放宽筛选或稍后再试。</div>`);
-    toast(`本机实测仅 ${reachableIds.length} 个可达，已回退边缘结果`, 'err');
+      ⚠️ 本机实测 ${pool.length} 个节点全部不可达，已回退展示 CF 边缘探测结果；
+      带「本机✗」的节点可能连不上。可放宽筛选、增大实测节点上限或稍后再试。</div>`);
+    toast('本机实测全部不可达，已回退边缘结果', 'err');
     return;
   }
   // 对可达集合重新评分（服务端按权重排序，跳过边缘探测）

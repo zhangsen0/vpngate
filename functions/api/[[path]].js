@@ -234,7 +234,8 @@ async function route(method, path, request, env) {
     if (!token) return json({ ok: false, error: '签名密钥不可用（未配置 APP_PASSWORD）' }, 500);
     // 节点快照：列表刷新导致节点下线时，链接在有效期内仍可下载（内存 + KV）
     const result = await getServers(env, config);
-    const server = result.servers.find((s) => s.id === q.id);
+    let server = result.servers.find((s) => s.id === q.id);
+    if (!server) server = await findServerSnapshot(q.id, env); // 已下线但有快照时仍可生成链接
     if (server) rememberServer(server, ttlMs * 3, env);
     const url = new URL(request.url);
     // 链接以 .ovpn 结尾：多数客户端（含 OpenVPN Connect）按扩展名识别为配置文件
@@ -255,6 +256,9 @@ async function route(method, path, request, env) {
     // 列表刷新后节点可能下线：回退到快照（内存 + KV，链接有效期内仍可下载）
     if (!server) server = await findServerSnapshot(id, env);
     if (!server) return json({ ok: false, error: '未找到该服务器，可能已从列表移除' }, 404);
+    // 任何一次成功下载都写入快照：即使节点随后下线，有效期内（令牌TTL×3）仍可重复下载
+    const ttlMs = config.ovpn.linkTokenTtlSeconds * 1000;
+    rememberServer(server, ttlMs * 3, env);
     const ovpn = buildOvpn(server, config);
     if (!ovpn) return json({ ok: false, error: '该服务器缺少 OpenVPN 配置数据' }, 404);
     const fileName = `vpngate-${server.countryShort}-${server.ip}.ovpn`;
