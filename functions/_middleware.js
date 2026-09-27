@@ -25,10 +25,13 @@ export async function onRequest(context) {
     return next();
   }
 
-  // 免登录下载链接：/api/ovpn 携带有效短期令牌（外部客户端无 Cookie，如 OpenVPN Connect 导入）
-  if (path === '/api/ovpn') {
+  // 免登录下载链接：/api/ovpn 与 /api/ovpn-file/{id}.ovpn 携带有效短期令牌
+  // （外部客户端无 Cookie，如 OpenVPN Connect 导入；.ovpn 结尾利于客户端按扩展名识别）
+  if (path === '/api/ovpn' || (path.startsWith('/api/ovpn-file/') && path.endsWith('.ovpn'))) {
     const token = url.searchParams.get('token') || '';
-    const id = url.searchParams.get('id') || '';
+    const id = path === '/api/ovpn'
+      ? (url.searchParams.get('id') || '')
+      : path.slice('/api/ovpn-file/'.length, -'.ovpn'.length);
     if (token && id && (await verifyFileToken(env, token, id))) {
       return next();
     }

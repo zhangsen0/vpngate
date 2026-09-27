@@ -236,20 +236,22 @@ async function route(method, path, request, env) {
     const server = result.servers.find((s) => s.id === q.id);
     if (server) rememberServer(server, ttlMs * 3, env);
     const url = new URL(request.url);
-    const link = `${url.origin}/api/ovpn?id=${encodeURIComponent(q.id)}&token=${encodeURIComponent(token)}`;
+    // 链接以 .ovpn 结尾：多数客户端（含 OpenVPN Connect）按扩展名识别为配置文件
+    const link = `${url.origin}/api/ovpn-file/${encodeURIComponent(q.id)}.ovpn?token=${encodeURIComponent(token)}`;
     log(env, 'ovpn-link', `生成免登录下载链接 ${q.id.slice(0, 40)}`, clientIp);
     return json({ ok: true, url: link, expiresIn: config.ovpn.linkTokenTtlSeconds });
   }
 
-  // —— 生成 .ovpn ——
-  if (method === 'GET' && path === 'ovpn') {
+  // —— 生成 .ovpn（兼容两种路径：/api/ovpn?id= 与 /api/ovpn-file/{id}.ovpn） ——
+  if (method === 'GET' && (path === 'ovpn' || (path.startsWith('ovpn-file/') && path.endsWith('.ovpn')))) {
     const q = queryParams(request.url);
-    if (!q.id) return json({ ok: false, error: '缺少 id 参数' }, 400);
+    const id = path === 'ovpn' ? (q.id || '') : path.slice('ovpn-file/'.length, -'.ovpn'.length);
+    if (!id) return json({ ok: false, error: '缺少 id 参数' }, 400);
     const { config } = await loadConfig(env);
     const result = await getServers(env, config);
-    let server = result.servers.find((s) => s.id === q.id);
+    let server = result.servers.find((s) => s.id === id);
     // 列表刷新后节点可能下线：回退到快照（内存 + KV，链接有效期内仍可下载）
-    if (!server) server = await findServerSnapshot(q.id, env);
+    if (!server) server = await findServerSnapshot(id, env);
     if (!server) return json({ ok: false, error: '未找到该服务器，可能已从列表移除' }, 404);
     const ovpn = buildOvpn(server, config);
     if (!ovpn) return json({ ok: false, error: '该服务器缺少 OpenVPN 配置数据' }, 404);

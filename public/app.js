@@ -625,8 +625,9 @@ async function resetConfigForm() {
 
 function ovpnUrl(id) {
   // 必须返回完整绝对 URL：复制链接 / 多端 curl 命令在用户本机或手机浏览器使用时，
-  // 相对路径（无协议+域名）无法访问
-  return `${location.origin}/api/ovpn?id=${encodeURIComponent(id)}`;
+  // 相对路径（无协议+域名）无法访问；以 .ovpn 结尾便于 OpenVPN Connect 等客户端
+  // 按扩展名识别为配置文件（避免被当作"服务器地址"直连导致导入失败）
+  return `${location.origin}/api/ovpn-file/${encodeURIComponent(id)}.ovpn`;
 }
 
 /** 复制文本到剪贴板 */
