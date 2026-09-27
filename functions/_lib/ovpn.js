@@ -64,19 +64,13 @@ export function buildOvpn(server, config) {
   const extras = Array.isArray(ov.appendOptions) ? ov.appendOptions.filter(Boolean) : [];
   if (extras.length > 0) text += '\n' + extras.join('\n');
 
-  // 临时诊断：无条件输出 raw 关键信息（验证后移除）
-  text += '# dbg-raw-has: ' + raw.includes('DATA-CIPHERS') + '\n';
-  text += '# dbg-raw-head: ' + JSON.stringify(raw.slice(0, 80)) + '\n';
-  text += '# dbg-raw-tail: ' + JSON.stringify(raw.slice(-120)) + '\n';
-
-  // 临时诊断标记：验证线上是否运行最新 buildOvpn（验证后移除）
-  text += '\n# debug-ovpn-clean-5071196\n';
-
-  // 临时诊断：输出 raw 中 DATA-CIPHERS 所在行的真实格式（验证后移除）
-  if (raw.includes('DATA-CIPHERS')) {
-    const dbgLine = raw.split('\n').find((l) => l.includes('DATA-CIPHERS'));
-    text += '# dbg-raw-line: ' + JSON.stringify(dbgLine) + '\n';
-  }
+  // 最终兜底清理：对完整文本（含附加选项）再删一次大写残留指令。
+  // 附加选项可能被配置为错误的大写形式（DATA-CIPHERS 等），OpenVPN 不识别，
+  // 必须在输出前统一清除；正确小写形式（data-ciphers/auth-nocache 等）不受影响。
+  text = text
+    .replace(/^[ \t]*(DATA-CIPHERS|AUTH-NOCACHE|BLOCK-OUTSIDE-DNS)(\s.*)?$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 
   return { text, port, proto };
 }

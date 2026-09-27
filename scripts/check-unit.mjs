@@ -205,6 +205,20 @@ auth SHA1`;
   assert.ok(ovpn.text.includes('data-ciphers AES-128-CBC'), '小写指令应保留');
 });
 
+test('buildOvpn：附加选项含大写残留（配置错误）也会在输出前清除', () => {
+  const cfg = mergeConfig({ ovpn: { rewriteRemoteToIp: false, appendOptions: ['DATA-CIPHERS AES-256-GCM', 'auth-nocache'] } });
+  const raw = `client
+remote 2.2.2.2 1194 udp
+cipher AES-128-CBC
+data-ciphers AES-128-CBC
+auth SHA1`;
+  const server = { id: 't|2.2.2.2', ip: '2.2.2.2', configBase64: Buffer.from(raw).toString('base64') };
+  const ovpn = buildOvpn(server, cfg);
+  assert.ok(ovpn, '应成功生成');
+  assert.ok(!ovpn.text.includes('DATA-CIPHERS'), '附加选项中的大写 DATA-CIPHERS 应被清除');
+  assert.ok(ovpn.text.includes('auth-nocache'), '合法小写附加选项应保留');
+});
+
 test('buildOvpn：rewriteRemoteToIp=false 时保留原始 remote', () => {
   const cfg = mergeConfig({ ovpn: { rewriteRemoteToIp: false } });
   const server = parseCsv(sampleCsv())[1];
