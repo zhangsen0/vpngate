@@ -168,6 +168,16 @@ r = await req(`/api/ovpn?id=${encodeURIComponent(nodeId)}`);
 ok('GET /api/ovpn → 生成 .ovpn（含 remote 与 client）', r.status === 200 && r.text.includes('client') && r.text.includes('remote'), `len=${r.text.length}`);
 ok('ovpn 响应头为附件下载', (r.headers.get('Content-Disposition') || '').includes('attachment'));
 
+// 免登录 .ovpn 结尾链接：ovpn-url 生成 → 无 Cookie 下载（模拟 OpenVPN Connect 导入）
+r = await req(`/api/ovpn-url?id=${encodeURIComponent(nodeId)}`);
+const ovpnFileUrl = r.json && r.json.ok ? r.json.url : '';
+ok('GET /api/ovpn-url → 返回 .ovpn 结尾链接', r.status === 200 && ovpnFileUrl.includes('.ovpn') && ovpnFileUrl.startsWith('http'), `url=${ovpnFileUrl.slice(0, 80)}...`);
+if (ovpnFileUrl) {
+  const bare = await fetch(ovpnFileUrl);
+  const text = await bare.text();
+  ok('免登录 .ovpn 链接（无 Cookie）→ 200 且内容为配置', bare.status === 200 && text.includes('client') && text.includes('remote'), `status=${bare.status} len=${text.length}`);
+}
+
 r = await req(`/api/ovpn?id=not-exist-node`);
 ok('GET /api/ovpn 未知 id → 404', r.status === 404);
 
