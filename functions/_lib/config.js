@@ -107,7 +107,7 @@ export const DEFAULTS = {
     ports: [443],
     timeoutMs: 4000,
     concurrency: 6,
-    maxNodes: 40,
+    maxNodes: 120,
   },
   localProbe: {
     /** 页面内浏览器直连实测：对优选 IP 逐个发起 https 探测（反映本机网络真实可达性） */
