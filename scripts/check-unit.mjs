@@ -121,12 +121,17 @@ test('normalizeServers：解析 remote 端口与协议（tcp/udp）', () => {
     + Buffer.from('client\nremote 1.1.1.1 443 tcp\nproto tcp\n').toString('base64');
   const rowUdp = 'public-vpn-u,2.2.2.2,100,10,1000,Japan,JP,1,1000,1,1,1,Op,,'
     + Buffer.from('client\nremote 2.2.2.2 1194 udp\n').toString('base64');
-  const rows = parseCsv([head, rowTcp, rowUdp].join('\r\n'));
+  const rowTcp2 = 'public-vpn-t2,3.3.3.3,100,10,1000,Japan,JP,1,1000,1,1,1,Op,,'
+    + Buffer.from('client\nremote 3.3.3.3 443\nproto tcp\n').toString('base64');
+  const rows = parseCsv([head, rowTcp, rowUdp, rowTcp2].join('\r\n'));
   const sv = normalizeServers(rows).sort((a, b) => a.ip.localeCompare(b.ip));
   const t = sv.find((x) => x.ip === '1.1.1.1');
   const u = sv.find((x) => x.ip === '2.2.2.2');
+  const t2 = sv.find((x) => x.ip === '3.3.3.3');
   assert.equal(t.port, 443); assert.equal(t.proto, 'tcp');
   assert.equal(u.port, 1194); assert.equal(u.proto, 'udp');
+  // VPNGate 真实格式：remote 无协议列 + 单独 proto 指令
+  assert.equal(t2.port, 443); assert.equal(t2.proto, 'tcp');
 });
 
 test('applyFilters：禁用国家、最低在线、最低速度、最高 ping、正则', () => {
