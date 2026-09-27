@@ -458,7 +458,7 @@ function renderOptCards(ranked, data, results) {
         <div class="opt-main">
           <div class="row1"><span class="flag">${flagEmoji(r.countryShort)}</span><span class="ip">${esc(r.ip)}</span>
             <span class="badge ok">${esc(r.hostname)}</span>${lcChipOf(r.id)}</div>
-          <div class="row2">端口 ${portShow} · ${(r.proto || '').toUpperCase() || '-'} · 基础分 ${(r.baseScore || 0).toFixed(3)} → ${(r.score || 0).toFixed(3)}</div>
+          <div class="row2">端口 ${portShow} · ${(r.proto || '').toUpperCase() || '-'} · 在线 ${fmtUptime(r.uptimeHours)} · 基础分 ${(r.baseScore || 0).toFixed(3)} → ${(r.score || 0).toFixed(3)}</div>
         </div>
         <div class="opt-meta">
           <div class="rtt">${rttShow}</div>
