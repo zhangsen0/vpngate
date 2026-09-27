@@ -314,13 +314,13 @@ test('signFileToken/verifyFileToken：签名有效、id 绑定、过期拒绝、
 
 // ==================== 节点快照缓存 ====================
 
-test('rememberServer/findServerSnapshot：写入可查、过期清理、未过期保留', () => {
+test('rememberServer/findServerSnapshot：写入可查、过期清理、未过期保留', async () => {
   const s1 = { id: 'a|1.1.1.1', ip: '1.1.1.1', configBase64: 'x' };
   const s2 = { id: 'b|2.2.2.2', ip: '2.2.2.2', configBase64: 'y' };
   rememberServer(s1, 3600000); // 1h
   rememberServer(s2, -1000);   // 已过期
-  assert.equal(findServerSnapshot('a|1.1.1.1').ip, '1.1.1.1', '未过期可查');
-  assert.equal(findServerSnapshot('b|2.2.2.2'), null, '过期清理');
-  assert.equal(findServerSnapshot('不存在'), null, '未知 id 返回 null');
+  assert.equal((await findServerSnapshot('a|1.1.1.1')).ip, '1.1.1.1', '未过期可查');
+  assert.equal(await findServerSnapshot('b|2.2.2.2'), null, '过期清理');
+  assert.equal(await findServerSnapshot('不存在'), null, '未知 id 返回 null');
   rememberServer(null); // 非法输入不报错
 });
