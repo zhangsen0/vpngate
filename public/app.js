@@ -431,10 +431,13 @@ function renderOptCards(ranked, data, results) {
       return !lc ? '<span class="chip dim">本机未测</span>'
         : lc.reachable ? `<span class="chip ok">本机✓ ${lc.rttMs}ms</span>` : '<span class="chip bad">本机✗</span>';
     }
+    if (r.udp) return `<span class="chip warn">UDP 未测·试连</span>`;
     return r.reachable
       ? `<span class="chip ok">本机✓ ${r.rttMs}ms</span>`
-      : `<span class="chip bad">本机✗ ${r.why === 'timeout' ? '超时' : ''}</span>`;
+      : `<span class="chip bad">本机✗ 超时</span>`;
   };
+  // 实测 RTT/端口优先取本机实测结果（ids 模式服务端不返回实测 RTT，避免“毫秒缺失”）
+  const lrOf = (id) => results && results.get(id);
   const body = document.getElementById('optBody');
   body.innerHTML = `
     <div class="section-title">${data.mode === 'local' ? '本机实测可达节点（按权重评分排序）' : `CF 边缘探测 ${(data.probed || []).length} 个候选，${ranked.length} 个达标节点（按最终评分排序）`}</div>
@@ -442,26 +445,32 @@ function renderOptCards(ranked, data, results) {
       <button class="btn btn-primary" data-act="opt-probe">🔍 本机实测 Top ${maxNodes}（页面内直连）</button>
       <button class="btn" data-act="opt-lc-all">本机校验全部 ${ranked.length} 个</button>
     </div>
-    ${ranked.map((r, i) => `
+    ${ranked.map((r, i) => {
+      const lr = lrOf(r.id);
+      const rttShow = lr && lr.rttMs != null ? `${lr.rttMs}ms` : (r.reachable ? ((r.rttMs || '') + 'ms') : '不可达');
+      const portShow = (lr && lr.port) || r.port || r.ports || '-';
+      return `
       <div class="opt-card">
         <div class="opt-rank">${i + 1}</div>
         <div class="opt-main">
           <div class="row1"><span class="flag">${flagEmoji(r.countryShort)}</span><span class="ip">${esc(r.ip)}</span>
             <span class="badge ok">${esc(r.hostname)}</span>${lcChipOf(r.id)}</div>
-          <div class="row2">端口 ${r.port || r.ports || '-'} · 基础分 ${(r.baseScore || 0).toFixed(3)} → ${(r.score || 0).toFixed(3)}</div>
+          <div class="row2">端口 ${portShow} · ${(r.proto || '').toUpperCase() || '-'} · 基础分 ${(r.baseScore || 0).toFixed(3)} → ${(r.score || 0).toFixed(3)}</div>
         </div>
         <div class="opt-meta">
-          <div class="rtt">${r.reachable ? (r.rttMs || '') + 'ms' : '不可达'}</div>
+          <div class="rtt">${rttShow}</div>
           <div style="margin-top:4px;display:flex;gap:6px;justify-content:flex-end">
             <button class="btn btn-sm" data-act="opt-lc" data-id="${esc(r.id)}">本机校验</button>
             <button class="btn btn-sm" data-act="opt-pf" data-id="${esc(r.id)}">多端</button>
             <button class="btn btn-sm" data-act="opt-ovpn" data-id="${esc(r.id)}">下载配置</button>
           </div>
         </div>
-      </div>`).join('')}
-    <div class="section-title">「本机实测」用你的浏览器直连各节点 TCP 端口（不另开窗口）：
-      仅「连接超时」判为本机不可达（TCP 未建立），
-      端口有响应（含协议断开/证书错误）即视为本机可达；实测范围 = 全部节点按评分取前 ${maxNodes} 名（配置 → 本机实测可调）。</div>`;
+      </div>`;
+    }).join('')}
+    <div class="section-title">「本机实测」用你的浏览器直连各节点实际 TCP 端口（不另开窗口）：
+      仅「连接超时」判为本机不可达（TCP 未建立）；
+      端口有响应（含协议断开/证书错误）即视为本机可达；
+      UDP 端口浏览器无法探测，标注「UDP 未测·试连」——优先选本机✓ 的 TCP 节点。</div>`;
   document.querySelectorAll('[data-act="opt-ovpn"]').forEach((btn) => {
     btn.addEventListener('click', () => downloadOvpn(btn.dataset.id));
   });
@@ -505,9 +514,23 @@ async function probeLocalIp(ip, ports, timeoutMs) {
 }
 
 /**
+ * 按节点实际 OpenVPN 端口/协议探测：
+ * - TCP（或未解析出协议）：浏览器直连实际端口（默认端口兜底），可达/超时；
+ * - UDP：浏览器无法发 UDP 探测，返回 udp:true 标记「未测·试连」。
+ */
+async function probeLocalServer(s, fallbackPorts, timeoutMs) {
+  const proto = (s.proto || '').toLowerCase();
+  const port = s.port || fallbackPorts[0];
+  if (proto === 'udp') return { reachable: null, udp: true, port, why: 'udp' };
+  const r = await probeLocalIp(s.ip, [port, ...fallbackPorts.filter((p) => p !== port)], timeoutMs);
+  return { ...r, port: r.port || port };
+}
+
+/**
  * 本机实测：用总节点（按评分取前 maxNodes）在浏览器直连筛一遍，
- * 标出本机可达/不可达；之后「仅看本机可达并重新评分」。
- * 防全不可达：可达数不足时自动回退到 CF 边缘结果并警示。
+ * 标出本机可达/不可达/UDP 未测；对 TCP 可达集合重新评分排序，
+ * 并附带展示评分前 N 个 UDP 候选（需试连）。
+ * 防全不可达：TCP 实测 0 可达时自动回退到 CF 边缘结果并警示。
  */
 async function localProbeAll(ranked, data, prevResults) {
   const lp = state.config.localProbe || {};
@@ -522,27 +545,27 @@ async function localProbeAll(ranked, data, prevResults) {
   const timeoutMs = lp.timeoutMs || 3000;
 
   const body = document.getElementById('optBody');
-  body.innerHTML = `<div class="section-title">🔍 本机实测中（共 ${pool.length} 个节点，浏览器直连 TCP 端口，请保持页面打开）…</div>
+  body.innerHTML = `<div class="section-title">🔍 本机实测中（共 ${pool.length} 个节点，按实际端口直连，UDP 标注未测）…</div>
     <div class="probe-bar"><div class="probe-bar-inner" id="probeBarInner" style="width:0%"></div></div>
     <div class="empty" id="probeStatus">已测 0 / ${pool.length}，本机可达 0…</div>`;
 
   const results = new Map();
   const CONC = 8;
-  let idx = 0, done = 0, ok = 0;
+  let idx = 0, done = 0, ok = 0, udpCount = 0;
   const barInner = document.getElementById('probeBarInner');
   const statusEl = document.getElementById('probeStatus');
   const tick = () => {
     barInner.style.width = Math.round((done / pool.length) * 100) + '%';
-    statusEl.textContent = `已测 ${done} / ${pool.length}，本机可达 ${ok}，不可达 ${done - ok}…`;
+    statusEl.textContent = `已测 ${done} / ${pool.length}，本机可达 ${ok}，UDP 未测 ${udpCount}，超时 ${done - ok - udpCount}…`;
   };
   const workers = [];
   for (let w = 0; w < CONC; w++) {
     workers.push((async () => {
       while (idx < pool.length) {
         const s = pool[idx++];
-        const r = await probeLocalIp(s.ip, ports, timeoutMs);
+        const r = await probeLocalServer(s, ports, timeoutMs);
         results.set(s.id, r);
-        done++; if (r.reachable) ok++;
+        done++; if (r.reachable) ok++; else if (r.udp) udpCount++;
         if (done % 5 === 0 || done === pool.length) tick();
       }
     })());
@@ -550,17 +573,25 @@ async function localProbeAll(ranked, data, prevResults) {
   await Promise.all(workers);
   tick();
 
+  // TCP 实测可达集合（UDP 浏览器无法验证，另作候选展示）
   const reachableIds = [];
-  results.forEach((v, id) => { if (v.reachable) reachableIds.push(id); });
+  const udpCandidates = [];
+  results.forEach((v, id) => {
+    if (v.reachable) reachableIds.push(id);
+    if (v.udp) {
+      const s = state.servers.find((x) => x.id === id);
+      if (s) udpCandidates.push(s);
+    }
+  });
   // 只要 ≥1 个本机可达就采用本机结果（用户只需 1~2 个能连的节点）；
   // 仅 0 可达时回退 CF 边缘结果并警示（防全不可达：永远有结果可看）
   if (reachableIds.length === 0) {
     // 防全不可达：回退到 CF 边缘结果，标注实测状态并警示
     renderOptCards(ranked, data, results);
     body.insertAdjacentHTML('afterbegin', `<div class="empty" style="color:var(--err,#e5484d);margin-bottom:8px">
-      ⚠️ 本机实测 ${pool.length} 个节点全部不可达，已回退展示 CF 边缘探测结果；
-      带「本机✗」的节点可能连不上。可放宽筛选、增大实测节点上限或稍后再试。</div>`);
-    toast('本机实测全部不可达，已回退边缘结果', 'err');
+      ⚠️ 本机实测 ${pool.length} 个节点 TCP 全部超时（UDP ${udpCount} 个未测），已回退展示 CF 边缘探测结果；
+      带「本机✗」的节点可能连不上。可切换网络（WiFi↔流量）、放宽筛选、增大实测节点上限或稍后再试。</div>`);
+    toast('本机实测 TCP 全部不可达，已回退边缘结果', 'err');
     return;
   }
   // 对可达集合重新评分（服务端按权重排序，跳过边缘探测）
@@ -571,9 +602,24 @@ async function localProbeAll(ranked, data, prevResults) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids: reachableIds }),
     });
-    renderOptCards(d2.ranked || [], { ...data, mode: 'local', probed: d2.probed }, results);
+    let list = d2.ranked || [];
+    // 附带展示评分前 N 个 UDP 候选（浏览器无法探测 UDP，需试连）
+    const maxUdp = Math.max(0, Math.min(50, lp.maxUdpCandidates || 8));
+    if (maxUdp > 0 && udpCandidates.length > 0) {
+      const udpTop = udpCandidates
+        .sort((a, b) => (b.score || 0) - (a.score || 0))
+        .slice(0, maxUdp)
+        .map((s) => ({
+          id: s.id, hostname: s.hostname, ip: s.ip, countryShort: s.countryShort,
+          port: s.port, proto: s.proto, baseScore: 0, score: 0, reachable: false, rttMs: null,
+          udp: true,
+        }));
+      list = list.concat(udpTop);
+    }
+    renderOptCards(list, { ...data, mode: 'local', probed: d2.probed }, results);
     body.insertAdjacentHTML('afterbegin', `<div class="section-title" style="color:var(--ok,#30a46c)">
-      ✅ 本机实测 ${pool.length} 个节点：可达 ${reachableIds.length} 个，已按权重重新评分（筛选结果优先本机可达）。</div>`);
+      ✅ 本机实测 ${pool.length} 个节点：TCP 可达 ${reachableIds.length} 个，已按权重重新评分
+      ${maxUdp > 0 && udpCandidates.length > 0 ? `；另附 ${Math.min(maxUdp, udpCandidates.length)} 个 UDP 候选（标「UDP 未测·试连」）` : ''}。</div>`);
   } catch (e) {
     renderOptCards(ranked, data, results);
     body.insertAdjacentHTML('afterbegin', `<div class="empty" style="color:var(--err,#e5484d);margin-bottom:8px">重新评分失败（${esc(e.message)}），已保留实测标记。</div>`);

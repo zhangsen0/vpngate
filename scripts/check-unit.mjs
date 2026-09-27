@@ -115,6 +115,20 @@ function sampleServers() {
   return normalizeServers(parseCsv(sampleCsv()).concat(parseJson(sampleJson())));
 }
 
+test('normalizeServers：解析 remote 端口与协议（tcp/udp）', () => {
+  const head = 'HostName,IP,Score,Ping,Speed,CountryLong,CountryShort,NumVpnSessions,Uptime,TotalUsers,TotalTraffic,LogType,Operator,Message,OpenVPN_ConfigData_Base64';
+  const rowTcp = 'public-vpn-t,1.1.1.1,100,10,1000,Japan,JP,1,1000,1,1,1,Op,,'
+    + Buffer.from('client\nremote 1.1.1.1 443 tcp\nproto tcp\n').toString('base64');
+  const rowUdp = 'public-vpn-u,2.2.2.2,100,10,1000,Japan,JP,1,1000,1,1,1,Op,,'
+    + Buffer.from('client\nremote 2.2.2.2 1194 udp\n').toString('base64');
+  const rows = parseCsv([head, rowTcp, rowUdp].join('\r\n'));
+  const sv = normalizeServers(rows).sort((a, b) => a.ip.localeCompare(b.ip));
+  const t = sv.find((x) => x.ip === '1.1.1.1');
+  const u = sv.find((x) => x.ip === '2.2.2.2');
+  assert.equal(t.port, 443); assert.equal(t.proto, 'tcp');
+  assert.equal(u.port, 1194); assert.equal(u.proto, 'udp');
+});
+
 test('applyFilters：禁用国家、最低在线、最低速度、最高 ping、正则', () => {
   const cfg = mergeConfig({
     filters: {

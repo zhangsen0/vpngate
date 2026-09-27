@@ -14,7 +14,26 @@ import { withTimeout, sha1Hex } from './util.js';
 export const LIGHT_FIELDS = [
   'id', 'hostname', 'ip', 'countryLong', 'countryShort',
   'score', 'pingMs', 'speedBps', 'sessions', 'uptimeHours', 'logType', 'operator',
+  'port', 'proto',
 ];
+
+/**
+ * 从 OpenVPN 原始配置（base64）解析 remote 端口与协议。
+ * 前端本机实测按实际端口/协议探测，避免「探测 443 而配置走 UDP 1194」导致连不上。
+ * @param {string} configBase64
+ * @returns {{port: number|null, proto: string|null}} proto: tcp/udp，无 remote 时为 null
+ */
+export function parseRemotePortProto(configBase64) {
+  if (!configBase64) return { port: null, proto: null };
+  try {
+    const raw = atob(configBase64);
+    const m = raw.match(/^remote\s+\S+\s+(\d+)\s+(\w+)/m);
+    if (m) return { port: Number.parseInt(m[1], 10), proto: m[2].toLowerCase() };
+    const m2 = raw.match(/^port\s+(\d+)/m); // 无 remote 时回退 port 指令
+    if (m2) return { port: Number.parseInt(m2[1], 10), proto: null };
+  } catch { /* base64 解码失败则忽略 */ }
+  return { port: null, proto: null };
+}
 
 /** 数据源缓存命名空间前缀 */
 const CACHE_PREFIX = 'https://vpngate.local/cache/';
@@ -180,6 +199,9 @@ export function normalizeServers(rawServers) {
         // 保留 base64（.ovpn 生成必需；大字段仅在 /api/servers 路由中被裁剪）
         configBase64: s.configBase64 || '',
       };
+      const rp = parseRemotePortProto(base.configBase64);
+      base.port = rp.port;
+      base.proto = rp.proto;
       return base;
     });
 }

@@ -112,6 +112,8 @@ export const DEFAULTS = {
     fastFailMs: 1200,
     /** 实测节点数上限（按评分取前 N 名实测，避免几百个节点全部探测过慢） */
     maxNodes: 120,
+    /** UDP 节点浏览器无法探测：实测后额外展示评分前 N 个 UDP 候选（标注需试连） */
+    maxUdpCandidates: 8,
   },
   probe: {
     /** 连通性探测端口列表（TCP），按序探测取首个成功 */
@@ -213,6 +215,7 @@ export const SCHEMA = [
     placeholder: '443' },
   { key: 'localProbe.timeoutMs', group: '本机实测', label: '实测单端口超时(ms)', type: 'int', min: 500, max: 10000, unit: 'ms' },
   { key: 'localProbe.maxNodes', group: '本机实测', label: '实测节点数上限(按评分取前 N)', type: 'int', min: 5, max: 500 },
+  { key: 'localProbe.maxUdpCandidates', group: '本机实测', label: 'UDP 候选展示数(需试连)', type: 'int', min: 0, max: 50 },
   { key: 'probe.ports', group: '连通性探测', label: '探测端口列表', type: 'arrayNumber',
     hint: '如 [443,1194,5555,992]，按序探测取首个成功' },
   { key: 'probe.timeoutMs', group: '连通性探测', label: '探测超时(ms)', type: 'int', min: 200, max: 10000, unit: 'ms' },
@@ -313,6 +316,7 @@ export function validateConfig(cfg) {
   config.localProbe.timeoutMs = clamp(intOf(withDefault('localProbe.timeoutMs', 3000), 3000), 500, 10000);
   config.localProbe.fastFailMs = clamp(intOf(withDefault('localProbe.fastFailMs', 1200), 1200), 200, 5000);
   config.localProbe.maxNodes = clamp(intOf(withDefault('localProbe.maxNodes', 120), 120), 5, 500);
+  config.localProbe.maxUdpCandidates = clamp(intOf(withDefault('localProbe.maxUdpCandidates', 8), 8), 0, 50);
   config.probe.ports = intArrayOf(withDefault('probe.ports', [443, 1194])).filter((p) => p >= 1 && p <= 65535);
   if (config.probe.ports.length === 0) config.probe.ports = [443];
   config.probe.timeoutMs = clamp(intOf(withDefault('probe.timeoutMs', 2500), 2500), 200, 10000);
