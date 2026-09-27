@@ -257,7 +257,8 @@ async function route(method, path, request, env) {
     log(env, 'ovpn', `下载配置 ${server.ip} (${server.countryShort})`, clientIp);
     return new Response(ovpn.text, {
       headers: {
-        'Content-Type': 'application/x-openvpn-profile; charset=utf-8',
+        // 不带 charset：部分 OpenVPN Connect 版本对带参数的 Content-Type 精确匹配失败
+        'Content-Type': 'application/x-openvpn-profile',
         'Content-Disposition': `attachment; filename="${fileName}"`,
         'Access-Control-Allow-Origin': '*',
       },
