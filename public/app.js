@@ -431,7 +431,7 @@ function renderOptCards(ranked, data, results) {
       return !lc ? '<span class="chip dim">本机未测</span>'
         : lc.reachable ? `<span class="chip ok">本机✓ ${lc.rttMs}ms</span>` : '<span class="chip bad">本机✗</span>';
     }
-    if (r.udp) return `<span class="chip warn">UDP 未测·试连</span>`;
+    if (r.udp) return `<span class="chip warn" title="UDP 端口浏览器无法探测，需试连">UDP 未测·试连</span>`;
     return r.reachable
       ? `<span class="chip ok">本机✓ ${r.rttMs}ms</span>`
       : `<span class="chip bad">本机✗ 超时</span>`;
@@ -470,7 +470,10 @@ function renderOptCards(ranked, data, results) {
     <div class="section-title">「本机实测」用你的浏览器直连各节点实际 TCP 端口（不另开窗口）：
       仅「连接超时」判为本机不可达（TCP 未建立）；
       端口有响应（含协议断开/证书错误）即视为本机可达；
-      UDP 端口浏览器无法探测，标注「UDP 未测·试连」——优先选本机✓ 的 TCP 节点。</div>`;
+      UDP 端口浏览器无法探测，标注「UDP 未测·试连」——优先选本机✓ 的 TCP 节点。
+      ⚠️ <b>本机✓ 仅代表网络层可达（TCP 能建立）</b>，不代表 443 上 OpenVPN 服务一定可用：
+      运营商可能干扰 OpenVPN 特征、或个别节点未启用 OpenVPN 服务。连接失败时：① 换节点重试；
+      ② 改试「🔐 L2TP 原生」（SoftEther 默认开启 L2TP/IPsec，走 UDP/ESP，国内网络普遍可连）。</div>`;
   document.querySelectorAll('[data-act="opt-ovpn"]').forEach((btn) => {
     btn.addEventListener('click', () => downloadOvpn(btn.dataset.id));
   });
@@ -818,7 +821,7 @@ function pfPanelHtml(platform, url, label) {
       tab: '🔐 L2TP 原生',
       title: 'L2TP/IPsec（系统原生 · 无需第三方客户端）',
       steps: [
-        `VPNGate 节点由 SoftEther 驱动，普遍开放 <b>L2TP/IPsec</b>：服务器 <b>${ip}</b>，PSK <b>vpn</b>，账密 <b>vpn / vpn</b>。`,
+        `<b>推荐优先使用</b>：OpenVPN 连不上时（运营商干扰/节点未启用），L2TP/IPsec 走 UDP/ESP 国内普遍可连。VPNGate 节点由 SoftEther 驱动，普遍开放 <b>L2TP/IPsec</b>：服务器 <b>${ip}</b>，PSK <b>vpn</b>，账密 <b>vpn / vpn</b>。`,
         `<b>iOS</b>：设置 → 通用 → VPN 与设备管理 → 添加 VPN → 类型选 <b>L2TP/IPSec</b> → 填上述参数 → 连接。`,
         `<b>Android</b>：设置 → 网络与互联网 → VPN → 添加 → 类型选 <b>L2TP/IPSec PSK</b> → 填参数 → 连接（部分新系统已移除 L2TP 选项）。`,
         `<b>macOS</b>：系统设置 → 网络 → VPN → 添加 → 类型 <b>L2TP over IPsec</b> → 填参数 → 连接。`,
@@ -931,6 +934,10 @@ async function openPlatformModal(id) {
   if (!url) url = ovpnUrl(id);
   body.innerHTML = `
     <div class="section-title">节点 ${esc(s.ip || id)}${s.countryShort ? ` · ${esc(s.countryShort)}` : ''}</div>
+    <div class="cfg-hint" style="margin:6px 0 10px;padding:8px 10px;border:1px solid #f0c36d;background:#fef9e7;border-radius:6px">
+      ⚠️ 连不上？OpenVPN TCP 443 可能被运营商干扰或节点未启用服务——<b>优先试「🔐 L2TP 原生」</b>（系统内置 VPN，
+      SoftEther 默认开启 L2TP/IPsec，走 UDP/ESP 国内普遍可连），或换一个节点重试。
+    </div>
     ${pfPanelHtml('', url, label)}`;
   document.getElementById('pfMask').hidden = false;
 }
