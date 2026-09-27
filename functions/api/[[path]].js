@@ -245,7 +245,8 @@ async function route(method, path, request, env) {
   // —— 生成 .ovpn（兼容两种路径：/api/ovpn?id= 与 /api/ovpn-file/{id}.ovpn） ——
   if (method === 'GET' && (path === 'ovpn' || (path.startsWith('ovpn-file/') && path.endsWith('.ovpn')))) {
     const q = queryParams(request.url);
-    const id = path === 'ovpn' ? (q.id || '') : path.slice('ovpn-file/'.length, -'.ovpn'.length);
+    // params.path 为 URL 编码态，需解码后与签名时的 id 比对/查询列表（id 含 | 等特殊字符）
+    const id = path === 'ovpn' ? (q.id || '') : decodeURIComponent(path.slice('ovpn-file/'.length, -'.ovpn'.length));
     if (!id) return json({ ok: false, error: '缺少 id 参数' }, 400);
     const { config } = await loadConfig(env);
     const result = await getServers(env, config);
