@@ -922,6 +922,20 @@ function pfPanelHtml(platform, url, label) {
       altCmd: `curl -L -o ~/${label}.ovpn "${url}" && sudo openvpn --config ~/${label}.ovpn`,
       altCmdLabel: '复制 CLI 连接命令',
     },
+    guide: {
+      tab: '📖 L2TP 全端指南',
+      title: 'L2TP/IPsec 全平台使用指南（系统原生 · 免第三方客户端）',
+      noCmd: true, // 纯文档面板：不渲染下载配置与命令按钮
+      steps: [
+        `<b>统一参数</b>（所有平台一致）：服务器（Server）= <b>${ip}</b> · 类型 = <b>L2TP/IPsec（PSK）</b> · 预共享密钥（PSK/Secret）= <b>vpn</b> · 用户名/密码 = <b>vpn / vpn</b>。`,
+        `<b>① iOS（iPhone/iPad）</b>：设置 → 通用 → VPN 与设备管理 → 添加 VPN 配置 → 类型选 <b>L2TP/IPSec</b> → 服务器=${ip}、账户=vpn、密码=vpn、密钥=<b>vpn</b> → 完成 → 连接。`,
+        `<b>② Android（分系统版本）</b>：设置 → 网络与互联网/连接 → VPN → 添加（＋）→ 类型选 <b>L2TP/IPSec PSK</b> → 服务器=${ip}、PSK=<b>vpn</b>、账密=vpn/vpn → 连接。<br/>⚠️ 原生 Android 12+ 已移除 L2TP 选项；国产 ROM（MIUI/HarmonyOS/ColorOS/OriginOS 等）一般保留，若类型列表没有 L2TP，请改用 OpenVPN 方式（见 iOS/Android 标签页）或 iOS/Windows/Linux。`,
+        `<b>③ Windows（10/11，推荐一条命令）</b>：以管理员身份打开 PowerShell，运行下方「复制 Windows 创建命令」（内置注册表 NAT 补丁 AssumeUDPEncapsulationContext=2，国内网络必填），再运行「复制 Windows 连接命令」。<br/>手动方式：设置 → 网络和 Internet → VPN → 添加 VPN 连接 → VPN 类型 <b>L2TP/IPsec</b> → 预共享密钥 <b>vpn</b> → 账密 vpn/vpn → 连接。`,
+        `<b>④ macOS</b>：系统设置 → 网络 → VPN → 添加 VPN 配置 → 类型 <b>L2TP over IPsec</b> → 服务器=${ip}、账户=vpn、密码=vpn → 认证设置里选「共享的密钥」并填 <b>vpn</b> → 连接。`,
+        `<b>⑤ Linux（推荐一行命令）</b>：下方「复制 Linux 创建命令」自动安装 network-manager-l2tp 并创建连接（含 IPsec PSK vpn）。<br/>无桌面环境（纯 CLI）：<code>sudo apt install -y xl2tpd strongswan</code>，在 /etc/ipsec.conf 设密钥 vpn、/etc/xl2tpd/xl2tpd.conf 指向 ${ip} 后拨号。`,
+        `<b>常见问题</b>：<br/>① 连不上 → 换节点重试（L2TP 非所有节点都开启）或换网络（WiFi↔流量）；<br/>② Windows 报 789/691 → 确认注册表补丁已加、账密为 <b>vpn/vpn</b>；<br/>③ iOS 提示「IPsec 连接失败」→ 确认密钥 PSK 填 <b>vpn</b>、类型为 L2TP/IPSec；<br/>④ 速度慢/频繁断开 → 在优选列表选评分高、在线时间长（如 100+ 天）的节点；<br/>⑤ 本节点连不上可换卡片/列表其他节点，配置参数格式完全一致。`,
+      ],
+    },
   };
   const key = platform && panels[platform] ? platform : 'l2tp';
   const p = panels[key];
@@ -931,6 +945,7 @@ function pfPanelHtml(platform, url, label) {
     <div class="pf-panel ${k === key ? 'active' : ''}" data-pf-panel="${k}">
       <div class="section-title">${x.title}</div>
       <ol class="steps">${x.steps.map((s) => `<li>${s}</li>`).join('')}</ol>
+      ${x.noCmd ? '' : `
       <div class="row-actions" style="margin-top:0">
         <a class="btn btn-primary" href="${esc(url)}" download="${k === 'mobile' ? esc(label + '.ovpn') : ''}">下载配置</a>
         ${k === 'mobile' ? `<button class="btn" data-pf-copy="${esc(url)}">复制链接</button>` : ''}
@@ -949,7 +964,7 @@ function pfPanelHtml(platform, url, label) {
       ${x.extraCmd ? `<div class="pf-cmd" style="margin-top:8px">
         <div class="code-box">${esc(x.extraCmd)}</div>
         <button class="btn btn-sm" data-pf-copy="${esc(x.extraCmd)}">复制</button>
-      </div>` : ''}
+      </div>` : ''}`}
     </div>`).join('');
 
   return `<div class="lc-hint">VPNGate 节点（SoftEther）同时开放 <b>OpenVPN</b> 与 <b>L2TP/IPsec</b>：
