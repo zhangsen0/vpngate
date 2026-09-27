@@ -67,6 +67,12 @@ export function buildOvpn(server, config) {
   // 临时诊断标记：验证线上是否运行最新 buildOvpn（验证后移除）
   text += '\n# debug-ovpn-clean-5071196\n';
 
+  // 临时诊断：输出 raw 中 DATA-CIPHERS 所在行的真实格式（验证后移除）
+  if (raw.includes('DATA-CIPHERS')) {
+    const dbgLine = raw.split('\n').find((l) => l.includes('DATA-CIPHERS'));
+    text += '# dbg-raw-line: ' + JSON.stringify(dbgLine) + '\n';
+  }
+
   return { text, port, proto };
 }
 
