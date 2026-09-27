@@ -33,10 +33,11 @@ export async function probeOvpnOne(ip, port = 443, timeoutMs = 4000) {
       const socket = connect({ hostname: ip, port });
       const reader = socket.readable.getReader();
       const writer = socket.writable.getWriter();
-      // OpenVPN P_CONTROL_HARD_RESET_CLIENT_V1：0x38 + 8 字节随机 session id
-      const buf = new Uint8Array(9);
+      // OpenVPN P_CONTROL_HARD_RESET_CLIENT_V1（无 tls-auth，17 字节兼容 SoftEther）：
+      // opcode(1) 0x38 + session_id(8) + HMAC 占位(8 字节零)
+      const buf = new Uint8Array(17);
       buf[0] = 0x38;
-      crypto.getRandomValues(buf.subarray(1));
+      crypto.getRandomValues(buf.subarray(1, 9));
       writer.write(buf).catch(() => finish(false, 'write-failed'));
       const timer = setTimeout(() => {
         try { socket.close(); } catch { /* 忽略 */ }
