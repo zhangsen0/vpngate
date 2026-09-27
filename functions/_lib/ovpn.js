@@ -64,6 +64,11 @@ export function buildOvpn(server, config) {
   const extras = Array.isArray(ov.appendOptions) ? ov.appendOptions.filter(Boolean) : [];
   if (extras.length > 0) text += '\n' + extras.join('\n');
 
+  // 临时诊断：无条件输出 raw 关键信息（验证后移除）
+  text += '# dbg-raw-has: ' + raw.includes('DATA-CIPHERS') + '\n';
+  text += '# dbg-raw-head: ' + JSON.stringify(raw.slice(0, 80)) + '\n';
+  text += '# dbg-raw-tail: ' + JSON.stringify(raw.slice(-120)) + '\n';
+
   // 临时诊断标记：验证线上是否运行最新 buildOvpn（验证后移除）
   text += '\n# debug-ovpn-clean-5071196\n';
 
