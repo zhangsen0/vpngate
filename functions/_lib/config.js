@@ -101,6 +101,14 @@ export const DEFAULTS = {
     /** 归一化参考：会话数目标值（超过视为拥挤，越小越好） */
     sessionsTarget: 50,
   },
+  ovpnProbe: {
+    // CF 边缘真实 OpenVPN 协议探测：向节点发 HARD_RESET 首包，回 HARD_RESET_SERVER 即服务在线
+    enabled: true,
+    ports: [443],
+    timeoutMs: 4000,
+    concurrency: 6,
+    maxNodes: 40,
+  },
   localProbe: {
     /** 页面内浏览器直连实测：对优选 IP 逐个发起 https 探测（反映本机网络真实可达性） */
     enabled: true,

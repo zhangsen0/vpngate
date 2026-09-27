@@ -23,6 +23,7 @@ import { getServers, LIGHT_FIELDS } from '../_lib/sources.js';
 import { runOptimize } from '../_lib/optimize.js';
 import { buildOvpn, nodeParams } from '../_lib/ovpn.js';
 import { probeServer } from '../_lib/probe.js';
+import { probeOvpnBatch } from '../_lib/ovpn-probe.js';
 import {
   issueToken, authCookieHeaders, clearCookieHeaders, safeEqual, isAuthed,
   checkLoginLock, recordLoginFail, clearLoginLock, signFileToken,
@@ -142,6 +143,26 @@ async function route(method, path, request, env) {
   }
 
   // —— 服务器列表 ——
+  if (method === 'POST' && path === 'probe-ovpn') {
+    // CF 边缘 OpenVPN 服务真实探测：{ ids: [...] }（最多 maxNodes 个），登录保护
+    if (!(await isAuthed(request, env))) return json({ ok: false, error: '未授权' }, 401);
+    const body = await readJson(request).catch(() => null);
+    const ids = Array.isArray(body && body.ids) ? body.ids.map(String).slice(0, 80) : [];
+    if (!ids.length) return json({ ok: false, error: 'ids 不能为空' });
+    const { config } = await loadConfig(env);
+    const maxNodes = Math.min(Math.max(Number((config.ovpnProbe || {}).maxNodes) || 40, 1), 80);
+    const { servers: all } = await getServers(env, config);
+    const byId = new Map(all.map((x) => [x.id, x]));
+    const targets = ids
+      .filter((id) => byId.has(id))
+      .slice(0, maxNodes)
+      .map((id) => ({ id, ip: byId.get(id).ip }));
+    if (!targets.length) return json({ ok: true, results: {}, note: '无匹配节点' });
+    const results = await probeOvpnBatch(config, targets);
+    log(env, 'ovpn-probe', `CF 边缘 OpenVPN 探测 ${targets.length} 个节点（在线 ${Object.values(results).filter((r) => r.online).length}）`, clientIp);
+    return json({ ok: true, results });
+  }
+
   if (method === 'GET' && path === 'servers') {
     const q = queryParams(request.url);
     const { config } = await loadConfig(env);
