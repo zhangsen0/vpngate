@@ -27,18 +27,19 @@ export function parseRemotePortProto(configBase64) {
   if (!configBase64) return { port: null, proto: null };
   try {
     const raw = atob(configBase64);
-    // remote 行两种格式：`remote <host> <port>`（协议在单独 proto 指令）或 `remote <host> <port> <tcp|udp>`
-    const m = raw.match(/^remote[ \t]+\S+[ \t]+(\d+)(?:[ \t]+(\w+))?/m);
+    // remote 行两种格式：`remote <host> <port>`（协议在单独 proto 指令）或 `remote <host> <port> <tcp|udp>`。
+    // 不锚定行首：兼容官方源 base64 解码后可能带前导空白/BOM 的情况。
+    const m = raw.match(/remote[ \t]+\S+[ \t]+(\d+)(?:[ \t]+(\w+))?/);
     if (m) {
       const port = Number.parseInt(m[1], 10);
       let proto = m[2] ? m[2].toLowerCase() : null;
       if (!proto) {
-        const pm = raw.match(/^proto[ \t]+(\w+)/m); // 单独 proto 指令，如 proto udp
+        const pm = raw.match(/proto[ \t]+(\w+)/); // 单独 proto 指令，如 proto udp
         if (pm) proto = pm[1].toLowerCase();
       }
       return { port, proto };
     }
-    const m2 = raw.match(/^port[ \t]+(\d+)/m); // 无 remote 时回退 port 指令
+    const m2 = raw.match(/port[ \t]+(\d+)/); // 无 remote 时回退 port 指令
     if (m2) return { port: Number.parseInt(m2[1], 10), proto: null };
   } catch { /* base64 解码失败则忽略 */ }
   return { port: null, proto: null };
@@ -47,7 +48,7 @@ export function parseRemotePortProto(configBase64) {
 /** 数据源缓存命名空间前缀 */
 const CACHE_PREFIX = 'https://vpngate.local/cache/';
 /** 服务器数据结构版本：结构变更（新增字段等）时 bump，避免旧缓存无新字段 */
-const SERVERS_DATA_VERSION = 3;
+const SERVERS_DATA_VERSION = 4;
 
 // ==================== 拉取 ====================
 
