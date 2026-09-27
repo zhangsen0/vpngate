@@ -64,6 +64,9 @@ export function buildOvpn(server, config) {
   const extras = Array.isArray(ov.appendOptions) ? ov.appendOptions.filter(Boolean) : [];
   if (extras.length > 0) text += '\n' + extras.join('\n');
 
+  // 临时诊断标记：验证线上是否运行最新 buildOvpn（验证后移除）
+  text += '\n# debug-ovpn-clean-5071196\n';
+
   return { text, port, proto };
 }
 
