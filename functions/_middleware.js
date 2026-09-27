@@ -31,7 +31,8 @@ export async function onRequest(context) {
     const token = url.searchParams.get('token') || '';
     const id = path === '/api/ovpn'
       ? (url.searchParams.get('id') || '')
-      : path.slice('/api/ovpn-file/'.length, -'.ovpn'.length);
+      // pathname 是 URL 编码态，需解码后与签名时的 id 比对（签名用解码态）
+      : decodeURIComponent(path.slice('/api/ovpn-file/'.length, -'.ovpn'.length));
     if (token && id && (await verifyFileToken(env, token, id))) {
       return next();
     }
