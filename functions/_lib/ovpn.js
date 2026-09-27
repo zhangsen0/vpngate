@@ -34,23 +34,14 @@ export function buildOvpn(server, config) {
 
   let text = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 
-  // 清理 SoftEther 模板残留：证书块（<xxx>...</xxx>）外的大写指令行。
-  // OpenVPN 选项大小写敏感，大写形式（DATA-CIPHERS / AUTH-NOCACHE / BLOCK-OUTSIDE-DNS 等）
-  // 不被识别，客户端解析报 Options error → 导入/连接失败。
-  // 正确的小写形式要么已存在（如 data-ciphers AES-128-CBC），要么非必需，删除不影响功能。
-  {
-    const lines = text.split('\n');
-    let inBlock = false;
-    const cleaned = [];
-    for (const ln of lines) {
-      const t = ln.trim();
-      if (/^<\//.test(t)) inBlock = false;
-      else if (/^</.test(t)) inBlock = true;
-      if (!inBlock && /^[A-Z][A-Z0-9-]*(\s|$)/.test(t)) continue; // 删除大写指令行（含无参数行）
-      cleaned.push(ln);
-    }
-    text = cleaned.join('\n').replace(/\n{2,}/g, '\n');
-  }
+  // 清理 SoftEther 模板残留的大写指令行（证书块后）：DATA-CIPHERS / AUTH-NOCACHE /
+  // BLOCK-OUTSIDE-DNS。OpenVPN 选项大小写敏感，大写形式不被识别，
+  // 客户端解析报 Options error → 导入/连接失败。
+  // 用白名单精确删除（不依赖标签行解析），正确的小写形式要么已存在
+  // （如 data-ciphers AES-128-CBC），要么非必需，删除不影响功能。
+  text = text
+    .replace(/^[ \t]*(DATA-CIPHERS|AUTH-NOCACHE|BLOCK-OUTSIDE-DNS)(\s.*)?$/gm, '')
+    .replace(/\n{2,}/g, '\n');
 
   // 改写 remote：remote <host> <port> [proto] 或 remote <ip> <port> [proto]
   let port = null;
