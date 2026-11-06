@@ -249,6 +249,8 @@ function deepMerge(target, source) {
 export function validateConfig(cfg) {
   const config = mergeConfig(cfg);
   const errors = [];
+  // 版本号随代码固定，不被 KV 中保存的旧配置覆盖（仅用于页面/健康检查展示）
+  config.version = DEFAULTS.version;
 
   const withDefault = (path, def) => {
     const node = path.split('.').reduce((o, k) => (o && typeof o === 'object' ? o[k] : undefined), config);

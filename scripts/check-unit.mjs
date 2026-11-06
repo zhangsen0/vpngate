@@ -68,6 +68,7 @@ test('validateConfig：越界值收敛、非法类型回退默认', () => {
   assert.equal(config.weights.ping, 0);
   assert.equal(config.probe, undefined, '旧 CF 边缘探测配置应被清理');
   assert.equal(config.optimize.cacheSeconds, undefined, '旧优选缓存配置应被清理');
+  assert.equal(config.version, DEFAULTS.version, '版本号应随代码固定，不被旧 KV 配置覆盖');
 });
 
 test('validateConfig：数据源为空时恢复默认', () => {
