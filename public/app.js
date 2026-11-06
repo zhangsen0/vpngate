@@ -104,11 +104,6 @@ async function init() {
     applyTheme(state.config.ui.theme);
     fillSortOptions();
     await loadServers();
-    // 版本号（用于页脚展示，非关键失败不影响使用）
-    try {
-      const h = await api('/api/health');
-      state.version = h.version;
-    } catch { /* 忽略 */ }
   } catch (e) {
     setStatus(`初始化失败：${e.message}`, 'err');
   }
@@ -212,7 +207,7 @@ function renderTable() {
 
 function renderFoot() {
   document.getElementById('footText').textContent =
-    `v${state.version || '1'} · 连通性仅由你的浏览器本地实测 · 共 ${state.servers.length} 个节点`;
+    `v${(state.config && state.config.version) || 1} · 连通性仅由你的浏览器本地实测 · 共 ${state.servers.length} 个节点`;
 }
 
 function fillCountrySelect() {
