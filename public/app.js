@@ -745,9 +745,92 @@ async function copyText(text, okMsg) {
   }
 }
 
+/**
+ * 各端「创建命令」及其副作用说明与删除命令（多端面板 + 主页使用说明共用）。
+ * @param {string} label - 连接名/文件名（vpngate-XX-1.2.3.4）
+ * @param {string} ip - 节点 IP
+ * @param {string} url - .ovpn 下载链接
+ */
+function pfCmds(label, ip, url) {
+  const L = esc(label);
+  return {
+    winL2tpCreate: {
+      title: 'Windows L2TP 创建命令（管理员 PowerShell）',
+      cmd: `New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\PolicyAgent" -Name AssumeUDPEncapsulationContext -Value 2 -PropertyType DWORD -Force | Out-Null; Add-VpnConnection -Name "${label}" -ServerAddress ${ip} -TunnelType L2tp -L2tpPsk "vpn" -AuthenticationMethod PAP -EncryptionLevel Optional -Force -RememberCredential`,
+      creates: `① 注册表值 <code>HKLM\\SYSTEM\\CurrentControlSet\\Services\\PolicyAgent\\AssumeUDPEncapsulationContext = 2</code>（NAT-T 补丁，<b>-Force 会覆盖原有值</b>）；② 系统 VPN 连接「<b>${L}</b>」（写入 rasphone.pbk）；③ <code>-RememberCredential</code> 记住的账密（Windows 凭据管理器）。`,
+      cleanup: `rasdial "${label}" /disconnect; Remove-VpnConnection -Name "${label}" -Force; Remove-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\PolicyAgent" -Name AssumeUDPEncapsulationContext -Force`,
+      cleanupNote: `需<b>管理员 PowerShell</b>。若该注册表值原本就存在（非本工具创建），请手动改回原值而不是删除；记住的凭据在「控制面板 → 凭据管理器 → Windows 凭据」中删除对应条目。`,
+    },
+    winL2tpConnect: {
+      title: 'Windows L2TP 连接命令',
+      cmd: `rasdial "${label}" vpn vpn`,
+      creates: `只建立一次 VPN 拨号会话，<b>不新增任何持久配置或文件</b>。`,
+      cleanup: `rasdial "${label}" /disconnect`,
+      cleanupNote: `断开后无残留；若连上后不想保留该 VPN 连接，用上面「Windows L2TP 创建命令」配套的删除命令移除。`,
+    },
+    linuxL2tpCreate: {
+      title: 'Linux L2TP 创建命令（NetworkManager）',
+      cmd: `sudo apt install network-manager-l2tp && nmcli connection add type l2tp con-name "${label}" l2tp.gateway ${ip} l2tp.username vpn l2tp.password vpn ipsec.psk vpn ipsec.enable yes && nmcli connection up "${label}"`,
+      creates: `① 用 apt 安装软件包 <code>network-manager-l2tp</code>（及依赖 strongswan / xl2tpd 等）；② NetworkManager 连接「<b>${L}</b>」，一般在 <code>/etc/NetworkManager/system-connections/${L}.nmconnection</code>（含 PSK 与账密）；③ 连接时产生的虚拟网卡与路由（断开即消失）。`,
+      cleanup: `nmcli connection down "${label}" 2>/dev/null; nmcli connection delete "${label}" 2>/dev/null; rm -f "/etc/NetworkManager/system-connections/${label}.nmconnection" 2>/dev/null; echo "已删除连接 ${label}"`,
+      cleanupNote: `删除连接即可清掉配置，<b>不要</b>随意 <code>apt remove network-manager-l2tp</code>（会影响其它 L2TP 连接）；确需卸载用 <code>sudo apt remove -y network-manager-l2tp && sudo apt autoremove -y</code>。`,
+    },
+    winOvpnDownload: {
+      title: 'Windows OpenVPN 下载/导入命令（PowerShell）',
+      cmd: `curl.exe -L -o "%TEMP%\\${label}.ovpn" "${url}" && start "" "%TEMP%\\${label}.ovpn"`,
+      creates: `① 文件 <code>%TEMP%\\${L}.ovpn</code>（即 <code>C:\\Users\\&lt;用户名&gt;\\AppData\\Local\\Temp\\${L}.ovpn</code>）；② <code>start</code> 会用关联的 OpenVPN 客户端打开，若用 <b>OpenVPN GUI 导入</b>，还会在 <code>%USERPROFILE%\\OpenVPN\\config\\</code> 或 <code>C:\\Program Files\\OpenVPN\\config\\</code> 生成同名配置并注册 profile。`,
+      cleanup: `Remove-Item "$env:TEMP\\${label}.ovpn" -Force -ErrorAction SilentlyContinue; Remove-Item "$env:USERPROFILE\\OpenVPN\\config\\${label}.ovpn" -Force -ErrorAction SilentlyContinue; Remove-Item "C:\\Program Files\\OpenVPN\\config\\${label}.ovpn" -Force -ErrorAction SilentlyContinue`,
+      cleanupNote: `另需在客户端（OpenVPN GUI / Connect）里删除已导入的 profile。若创建命令在 PowerShell 5.x 下 <code>%TEMP%</code> 未展开，文件会落在当前目录，请一并手动删除。`,
+    },
+    macOvpnDownload: {
+      title: 'macOS OpenVPN 下载/导入命令（终端）',
+      cmd: `curl -L -o ~/Downloads/${label}.ovpn "${url}" && open ~/Downloads/${label}.ovpn`,
+      creates: `① 文件 <code>~/Downloads/${L}.ovpn</code>；② <code>open</code> 触发客户端导入（Tunnelblick 复制到 <code>~/Library/Application Support/Tunnelblick/Configurations/</code>，OpenVPN Connect 存到自身配置库）。`,
+      cleanup: `rm -f ~/Downloads/${label}.ovpn`,
+      cleanupNote: `另需在客户端里删除已导入的 profile（Tunnelblick 删除上面对应目录里的 <code>.tblk</code>）。`,
+    },
+    linuxOvpnImport: {
+      title: 'Linux OpenVPN 原生创建命令（NetworkManager）',
+      cmd: `curl -L -o ~/${label}.ovpn "${url}" && nmcli connection import type openvpn file ~/${label}.ovpn`,
+      creates: `① 文件 <code>~/${L}.ovpn</code>；② NetworkManager 连接「<b>${L}</b>」（<code>/etc/NetworkManager/system-connections/${L}.nmconnection</code>，含配置与账密）。`,
+      cleanup: `nmcli connection down "${label}" 2>/dev/null; nmcli connection delete "${label}" 2>/dev/null; rm -f ~/${label}.ovpn`,
+      cleanupNote: `先断开、再删连接、最后删下载的文件；<code>2&gt;/dev/null</code> 用于忽略「连接不存在」的提示。`,
+    },
+    linuxOvpnCli: {
+      title: 'Linux OpenVPN CLI 连接命令（不写系统配置）',
+      cmd: `curl -L -o ~/${label}.ovpn "${url}" && sudo openvpn --config ~/${label}.ovpn`,
+      creates: `仅文件 <code>~/${L}.ovpn</code> 与一个前台 <code>openvpn</code> 进程；运行期间临时创建 tun 网卡与路由，<b>Ctrl+C 退出后自动消失，不写入任何系统配置</b>。`,
+      cleanup: `rm -f ~/${label}.ovpn`,
+      cleanupNote: `先在终端按 <b>Ctrl+C</b> 结束进程，再删文件即可，无需 sudo 清理。`,
+    },
+  };
+}
+
+/** 渲染一条命令：命令本体 + 创建了什么 + 删除命令 */
+function pfCmdBlockHtml(c) {
+  return `
+    <div class="pf-cmd-block">
+      <div class="pf-cmd-label">${c.title}</div>
+      <div class="pf-cmd">
+        <div class="code-box">${esc(c.cmd)}</div>
+        <button class="btn btn-sm" data-pf-copy="${esc(c.cmd)}">复制</button>
+      </div>
+      ${c.creates ? `<div class="pf-creates"><b>创建了：</b>${c.creates}</div>` : ''}
+      ${c.cleanup ? `<div class="pf-cleanup">
+        <div class="pf-cleanup-label">🗑 删除命令（配置用不上时清理）</div>
+        <div class="pf-cmd">
+          <div class="code-box">${esc(c.cleanup)}</div>
+          <button class="btn btn-sm" data-pf-copy="${esc(c.cleanup)}">复制</button>
+        </div>
+        ${c.cleanupNote ? `<div class="pf-note">${c.cleanupNote}</div>` : ''}
+      </div>` : ''}
+    </div>`;
+}
+
 /** 平台面板模板（url: 配置下载地址，label: 文件名） */
 function pfPanelHtml(platform, url, label) {
   const ip = label.replace(/^vpngate-[A-Za-z]{2}-/, '');
+  const C = pfCmds(label, ip, url);
   const panels = {
     l2tp: {
       tab: '🔐 L2TP 原生',
@@ -760,12 +843,7 @@ function pfPanelHtml(platform, url, label) {
         `部分节点可能未启用 L2TP，连接失败时换 OpenVPN 方式或换节点。`,
       ],
       // Windows 原生 L2TP 需注册表 AssumeUDPEncapsulationContext=2（国内 NAT 环境），否则默认直连失败
-      cmd: `New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\PolicyAgent" -Name AssumeUDPEncapsulationContext -Value 2 -PropertyType DWORD -Force | Out-Null; Add-VpnConnection -Name "${label}" -ServerAddress ${ip} -TunnelType L2tp -L2tpPsk "vpn" -AuthenticationMethod PAP -EncryptionLevel Optional -Force -RememberCredential`,
-      cmdLabel: '复制 Windows 创建命令',
-      altCmd: `rasdial "${label}" vpn vpn`,
-      altCmdLabel: '复制 Windows 连接命令',
-      extraCmd: `sudo apt install network-manager-l2tp && nmcli connection add type l2tp con-name "${label}" l2tp.gateway ${ip} l2tp.username vpn l2tp.password vpn ipsec.psk vpn ipsec.enable yes && nmcli connection up "${label}"`,
-      extraCmdLabel: '复制 Linux 原生创建命令',
+      cmds: [C.winL2tpCreate, C.winL2tpConnect, C.linuxL2tpCreate],
     },
     mobile: {
       tab: '📱 iOS / Android',
@@ -778,9 +856,9 @@ function pfPanelHtml(platform, url, label) {
         `⚠️ 不要用 URL 标签粘贴链接：那是「服务器地址/Cloud ID」入口，不支持 .ovpn 配置下载。`,
         `<b>Android 高版本用 L2TP</b>：安装开源客户端 <b>TunnelForge</b>（GitHub evokelektrique/tunnel-forge，F-Droid/APK 均可，无需 ROOT）→ 新建配置：服务器=${ip}、IPsec PSK=<b>vpn</b>、账密 vpn/vpn → 连接。`,
         `<b>Android 原生参考（无 L2TP 选项时）</b>：设置 → VPN → 添加 → 类型 <b>IKEv2/IPsec MSCHAPv2</b> → 服务器=${ip}、用户名/密码 <b>vpn / vpn</b> → 连接（SoftEther 默认开放 IKEv2）；或类型 <b>IKEv2/IPsec PSK</b> → 密钥 <b>vpn</b>。`,
+        `<b>用不上时清理</b>：在客户端里删除已导入的 profile，并删除手机「下载」目录中的 ${esc(label)}.ovpn 文件；系统原生 L2TP/IKEv2 在系统 VPN 设置里删除该配置即可。`,
       ],
-      cmd: url,
-      cmdLabel: '复制配置链接',
+      cmds: [],
     },
     windows: {
       tab: '🪟 Windows',
@@ -791,8 +869,7 @@ function pfPanelHtml(platform, url, label) {
         `<b>③</b> 连接时账密输入 <b>vpn / vpn</b>。`,
         `更推荐「🔐 L2TP 原生」标签页：Windows 内置 VPN 支持，一条命令创建。`,
       ],
-      cmd: `curl.exe -L -o "%TEMP%\\${label}.ovpn" "${url}" && start "" "%TEMP%\\${label}.ovpn"`,
-      cmdLabel: '复制 PowerShell 命令',
+      cmds: [C.winOvpnDownload],
     },
     macos: {
       tab: '🍎 macOS',
@@ -803,8 +880,7 @@ function pfPanelHtml(platform, url, label) {
         `<b>③</b> 连接时账密输入 <b>vpn / vpn</b>。`,
         `更推荐「🔐 L2TP 原生」标签页：系统设置 → 网络 → VPN → L2TP over IPsec。`,
       ],
-      cmd: `curl -L -o ~/Downloads/${label}.ovpn "${url}" && open ~/Downloads/${label}.ovpn`,
-      cmdLabel: '复制终端命令',
+      cmds: [C.macOvpnDownload],
     },
     linux: {
       tab: '🐧 Linux',
@@ -814,10 +890,7 @@ function pfPanelHtml(platform, url, label) {
         `<b>②</b> 连接：<b>nmcli connection up ${label}</b>；断开：<b>nmcli connection down ${label}</b>；`,
         `<b>③</b> 无桌面环境时用第二条命令（openvpn CLI）连接，账密输入 <b>vpn / vpn</b>，Ctrl+C 断开。`,
       ],
-      cmd: `curl -L -o ~/${label}.ovpn "${url}" && nmcli connection import type openvpn file ~/${label}.ovpn`,
-      cmdLabel: '复制原生创建命令',
-      altCmd: `curl -L -o ~/${label}.ovpn "${url}" && sudo openvpn --config ~/${label}.ovpn`,
-      altCmdLabel: '复制 CLI 连接命令',
+      cmds: [C.linuxOvpnImport, C.linuxOvpnCli],
     },
     guide: {
       tab: '📖 使用说明',
@@ -830,31 +903,20 @@ function pfPanelHtml(platform, url, label) {
   const p = panels[key];
   const tabHtml = Object.values(panels).map((x, i) =>
     `<button class="pf-tab ${x === p ? 'active' : ''}" data-pf-tab="${Object.keys(panels)[i]}">${x.tab}</button>`).join('');
-  const panelHtml = Object.entries(panels).map(([k, x]) => `
-    <div class="pf-panel ${k === key ? 'active' : ''}" data-pf-panel="${k}">
-      <div class="section-title">${x.title}</div>
-      <ol class="steps">${x.steps.map((s) => `<li>${s}</li>`).join('')}</ol>
-      ${x.noCmd ? '' : `
+  const panelHtml = Object.entries(panels).map(([k, x]) => {
+    const cmds = x.noCmd ? '' : `
       <div class="row-actions" style="margin-top:0">
         <a class="btn btn-primary" href="${esc(url)}" download="${k === 'mobile' ? esc(label + '.ovpn') : ''}">下载配置</a>
         ${k === 'mobile' ? `<button class="btn" data-pf-copy="${esc(url)}">复制链接</button>` : ''}
-        <button class="btn" data-pf-copy="${esc(x.cmd)}">${x.cmdLabel}</button>
-        ${x.altCmd ? `<button class="btn" data-pf-copy="${esc(x.altCmd)}">${x.altCmdLabel}</button>` : ''}
-        ${x.extraCmd ? `<button class="btn" data-pf-copy="${esc(x.extraCmd)}">${x.extraCmdLabel}</button>` : ''}
       </div>
-      <div class="pf-cmd">
-        <div class="code-box">${esc(x.cmd)}</div>
-        <button class="btn btn-sm" data-pf-copy="${esc(x.cmd)}">复制</button>
-      </div>
-      ${x.altCmd ? `<div class="pf-cmd" style="margin-top:8px">
-        <div class="code-box">${esc(x.altCmd)}</div>
-        <button class="btn btn-sm" data-pf-copy="${esc(x.altCmd)}">复制</button>
-      </div>` : ''}
-      ${x.extraCmd ? `<div class="pf-cmd" style="margin-top:8px">
-        <div class="code-box">${esc(x.extraCmd)}</div>
-        <button class="btn btn-sm" data-pf-copy="${esc(x.extraCmd)}">复制</button>
-      </div>` : ''}`}
-    </div>`).join('');
+      ${(x.cmds || []).map(pfCmdBlockHtml).join('')}`;
+    return `
+    <div class="pf-panel ${k === key ? 'active' : ''}" data-pf-panel="${k}">
+      <div class="section-title">${x.title}</div>
+      <ol class="steps">${x.steps.map((s) => `<li>${s}</li>`).join('')}</ol>
+      ${cmds}
+    </div>`;
+  }).join('');
 
   return `<div class="lc-hint">VPNGate 节点（SoftEther）同时开放 <b>OpenVPN</b> 与 <b>L2TP/IPsec</b>：
     「🔐 L2TP 原生」用系统内置 VPN 直接创建（iOS/Android/Windows/macOS/Linux 均原生支持，免客户端）；
@@ -873,17 +935,18 @@ function fullGuideSteps(ip) {
     `<b>一、两种连接方式怎么选</b><br/>本节点由 SoftEther 驱动，同时开放 <b>OpenVPN（TCP 443，需客户端）</b>与 <b>L2TP/IPsec（UDP，系统原生免客户端）</b>。账密统一 <b>vpn / vpn</b>，L2TP 预共享密钥 <b>vpn</b>。<br/>判断：卡片「本机✓」= 你的浏览器本地实测到节点 TCP 可达（唯一连通性判据），优先选本机✓ 的节点；OpenVPN 连不上时直接改用 L2TP。`,
     `<b>二、OpenVPN · iOS（iPhone/iPad）</b><br/>① App Store 安装 <b>OpenVPN Connect</b>（官方免费）；<br/>② 本页「下载配置」保存 .ovpn（或复制链接在手机浏览器打开自动下载）；<br/>③ 打开 App →「Get connected」→ 切到 <b>Upload File</b> 标签 → 选择刚下载的 .ovpn 文件 → Import；<br/>④ 连接时账密输入 <b>vpn / vpn</b>（勾选 Import autologin profile 可免密）。<br/>⚠️ 不要在 URL 标签粘贴链接——那是「服务器地址/Cloud ID」入口，不支持 .ovpn 配置下载。`,
     `<b>三、OpenVPN · Android</b><br/>① Play 商店安装 <b>OpenVPN Connect</b>；<br/>② 本页「下载配置」保存 .ovpn（或复制链接在浏览器打开下载）；<br/>③ 方式 A：打开 App → Get connected → <b>Upload File</b> → 选 .ovpn → Import；方式 B：在「文件/下载」里点 .ovpn →「用 OpenVPN Connect 打开」→ 导入；<br/>④ 连接账密 <b>vpn / vpn</b>。`,
-    `<b>四、OpenVPN · Windows（10/11）</b><br/>① 安装 <b>OpenVPN GUI</b>（openvpn.net 下载，装时选 OpenVPN Service 组件）或 OpenVPN Connect；<br/>② 本页「下载配置」保存 .ovpn → 右键 → <b>Open with OpenVPN GUI</b>（或 OpenVPN Connect 里 Upload File 导入）；<br/>③ 托盘图标 → Connect → 账密 <b>vpn / vpn</b>；<br/>④ 或用下方「复制 Windows OpenVPN 命令」一条命令下载并打开导入。`,
+    `<b>四、OpenVPN · Windows（10/11）</b><br/>① 安装 <b>OpenVPN GUI</b>（openvpn.net 下载，装时选 OpenVPN Service 组件）或 OpenVPN Connect；<br/>② 本页「下载配置」保存 .ovpn → 右键 → <b>Open with OpenVPN GUI</b>（或 OpenVPN Connect 里 Upload File 导入）；<br/>③ 托盘图标 → Connect → 账密 <b>vpn / vpn</b>；<br/>④ 或用「多端一键 → 🪟 Windows」里的命令下载并打开导入（下方列有它创建了什么与删除命令）。`,
     `<b>五、OpenVPN · macOS</b><br/>① 安装 <b>Tunnelblick</b>（免费开源）或 OpenVPN Connect；<br/>② 本页「下载配置」保存 .ovpn → <b>双击</b> → 自动导入 Tunnelblick（或 Upload File 导入 Connect）；<br/>③ 连接账密 <b>vpn / vpn</b>。`,
-    `<b>六、OpenVPN · Linux</b><br/>① 有桌面环境：<code>sudo apt install network-manager-openvpn-gnome</code>，然后在「设置 → 网络 → VPN」导入 .ovpn；<br/>② 纯命令行（推荐）：运行下方「复制 Linux OpenVPN 命令」——自动下载配置并用 <code>sudo openvpn --config</code> 连接，账密 <b>vpn / vpn</b>，Ctrl+C 断开。`,
+    `<b>六、OpenVPN · Linux</b><br/>① 有桌面环境：<code>sudo apt install network-manager-openvpn-gnome</code>，然后在「设置 → 网络 → VPN」导入 .ovpn；<br/>② 纯命令行（推荐）：用「多端一键 → 🐧 Linux」的「Linux OpenVPN CLI 连接命令」——自动下载配置并用 <code>sudo openvpn --config</code> 连接，账密 <b>vpn / vpn</b>，Ctrl+C 断开；该命令不写系统配置，删除时只需删掉下载的 .ovpn 文件。`,
     `<b>七、L2TP/IPsec · 统一参数</b><br/>服务器=<b>${host}</b> · 类型 <b>L2TP/IPsec（PSK）</b> · 预共享密钥 <b>vpn</b> · 账密 <b>vpn / vpn</b>。<br/>L2TP 走 UDP/ESP，国内网络普遍可连（OpenVPN 被运营商干扰/服务未开时优先用）。`,
     `<b>八、L2TP · iOS</b>：设置 → 通用 → VPN 与设备管理 → 添加 VPN 配置 → 类型 <b>L2TP/IPSec</b> → 服务器=${host}、账户=vpn、密码=vpn、密钥=<b>vpn</b> → 完成 → 连接。`,
     `<b>九、Android（原生参考 · 含高版本）</b><br/>① <b>L2TP/IPsec 开源客户端 TunnelForge（Android 12+ 无系统 L2TP 时的首选）</b>：GitHub <code>evokelektrique/tunnel-forge</code>（GPL-3.0 开源，专为现代 Android 重实现 L2TP/IPsec IKEv1），F-Droid 或 GitHub Releases 下载 APK 安装 → 新建配置：名称 vpngate、服务器=${host}、IPsec 预共享密钥 <b>vpn</b>、账密 <b>vpn / vpn</b> → 连接；<b>若同一节点 iPhone 能连而安卓 TunnelForge 连不上（日志「IKE no reply」）＝客户端 IKE 兼容问题</b>，改用其 fork <code>tzlun167/tunnel-forge</code>（MODP1024/DH group 2，兼容 SoftEther/racoon 老式 IPsec 服务器），配置不变；或同节点试安卓原生 IKEv2（见②）；<br/>② <b>IKEv2/IPsec MSCHAPv2（原生，Android 12+ 保留）</b>：设置 → VPN → 添加 → 类型 <b>IKEv2/IPsec MSCHAPv2</b> → 服务器=${host}、用户名 <b>vpn</b>、密码 <b>vpn</b> → 连接（SoftEther IPsec 服务默认开放 IKEv2）；<br/>③ IKEv2 不行试类型 <b>IKEv2/IPsec PSK</b> → 预共享密钥 <b>vpn</b>；<br/>④ 部分 ROM 仍有 <b>L2TP/IPSec PSK</b> 选项（国产 ROM MIUI/HarmonyOS/ColorOS/OriginOS 一般保留）：服务器=${host}、PSK=<b>vpn</b>、账密=vpn/vpn → 连接；<br/>⑤ 均不可用时用 OpenVPN Connect（见第三条）。<br/>⚠️ 原生 Android 12+ 已移除 L2TP 但<b>保留 IKEv2</b>；TunnelForge 不需要 ROOT（用户态网络栈）。`,
-    `<b>十、L2TP · Windows</b>：以管理员 PowerShell 运行下方「复制 Windows L2TP 创建命令」（内置注册表 NAT 补丁 <code>AssumeUDPEncapsulationContext=2</code>，国内网络必填），再运行「复制 Windows L2TP 连接命令」。<br/>手动：设置 → 网络和 Internet → VPN → 添加 VPN 连接 → VPN 类型 <b>L2TP/IPsec</b> → 预共享密钥 <b>vpn</b> → 账密 vpn/vpn。`,
+    `<b>十、L2TP · Windows</b>：以管理员 PowerShell 运行「多端一键 → 🔐 L2TP 原生」的「Windows L2TP 创建命令」（内置注册表 NAT 补丁 <code>AssumeUDPEncapsulationContext=2</code>，国内网络必填），再运行「Windows L2TP 连接命令」；用不上时运行该命令下方配套的「删除命令」即可移除 VPN 连接与注册表项。<br/>手动：设置 → 网络和 Internet → VPN → 添加 VPN 连接 → VPN 类型 <b>L2TP/IPsec</b> → 预共享密钥 <b>vpn</b> → 账密 vpn/vpn。`,
     `<b>十一、L2TP · macOS</b>：系统设置 → 网络 → VPN → 添加 VPN 配置 → 类型 <b>L2TP over IPsec</b> → 服务器=${host}、账户=vpn、密码=vpn → 认证设置选「共享的密钥」填 <b>vpn</b> → 连接。`,
-    `<b>十二、L2TP · Linux</b>：运行下方「复制 Linux L2TP 创建命令」自动安装 network-manager-l2tp 并创建连接。<br/>纯 CLI：<code>sudo apt install -y xl2tpd strongswan</code>，在 /etc/ipsec.conf 设密钥 <b>vpn</b>、/etc/xl2tpd/xl2tpd.conf 指向 ${host} 后拨号。`,
+    `<b>十二、L2TP · Linux</b>：运行「多端一键 → 🔐 L2TP 原生」的「Linux L2TP 创建命令」自动安装 network-manager-l2tp 并创建连接；用不上时运行其配套「删除命令」（先断开再 <code>nmcli connection delete</code>），无需卸载软件包。<br/>纯 CLI：<code>sudo apt install -y xl2tpd strongswan</code>，在 /etc/ipsec.conf 设密钥 <b>vpn</b>、/etc/xl2tpd/xl2tpd.conf 指向 ${host} 后拨号。`,
     `<b>十三、下载配置链接说明</b>：面板/卡片的「下载配置」与「复制链接」是 <b>带令牌的免登录链接</b>（.ovpn 结尾），默认有效期 10 分钟；可在任意设备/客户端直接下载导入，无需登录本系统。`,
     `<b>十四、常见问题</b><br/>① 连不上 → 先看卡片「本机✗」（浏览器实测超时，换节点/换网络）或节点未启用 OpenVPN 服务（改用 L2TP）；<br/>② OpenVPN 导入失败 → 用 <b>Upload File</b> 选 .ovpn 文件，勿在 URL 标签粘贴；<br/>③ 反复要账密 → 账密是 <b>vpn / vpn</b>（不是登录本系统的密码）；<br/>④ Windows L2TP 报 789/691 → 确认注册表补丁已加、账密正确；<br/>⑤ iOS L2TP 报「IPsec 失败」→ 确认 PSK 填 <b>vpn</b>；<br/>⑥ 速度慢/不稳 → 选评分高、在线时间长（100+ 天）的节点；<br/>⑦ 部分节点 OpenVPN/L2TP 服务未启用 → 多试几个节点（配置参数格式一致）；<br/>⑧ 节点动态上下线 → 稍后重试或刷新列表。`,
+    `<b>十五、命令创建了什么 / 用不上时怎么删</b><br/>「多端一键」和下方每条快捷命令都标注了 <b>创建了什么</b>，并配一条 <b>删除命令</b>（可直接复制）：<br/>① <b>Windows L2TP</b>：创建注册表 NAT-T 值 + 系统 VPN 连接 + 记住的凭据 → 用 <code>Remove-VpnConnection</code> 与 <code>Remove-ItemProperty</code> 删除（需管理员）；<br/>② <b>Linux L2TP</b>：安装 <code>network-manager-l2tp</code> 包 + 创建 NetworkManager 连接（<code>/etc/NetworkManager/system-connections/</code>）→ 用 <code>nmcli connection delete</code> 删除连接即可，不必卸载软件包；<br/>③ <b>Windows OpenVPN</b>：下载 <code>%TEMP%\\xxx.ovpn</code>，客户端导入还会在 config 目录生成同名配置 → 用 <code>Remove-Item</code> 清理这几处，并在客户端里删 profile；<br/>④ <b>Linux OpenVPN</b>：下载 <code>~/xxx.ovpn</code>，nmcli 导入还会建 NetworkManager 连接 → 删除命令先删连接再删文件；CLI 方式只留一个 .ovpn 文件，<code>rm</code> 即可；<br/>⑤ <b>macOS</b>：下载到 <code>~/Downloads/</code>，<code>rm</code> 删除，客户端里的 profile 手动移除。<br/>⚠️ 删除命令只清理本工具创建的项；若注册表值或软件包原本就存在（非本工具创建），请勿一并删除。`,
   ];
 }
 
@@ -891,21 +954,17 @@ function fullGuideSteps(ip) {
 function openGuideModal() {
   const body = document.getElementById('guideBody');
   const steps = fullGuideSteps(null);
-  const winCmd = `New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\PolicyAgent" -Name AssumeUDPEncapsulationContext -Value 2 -PropertyType DWORD -Force | Out-Null; Add-VpnConnection -Name "vpngate" -ServerAddress 节点IP -TunnelType L2tp -L2tpPsk "vpn" -AuthenticationMethod PAP -EncryptionLevel Optional -Force -RememberCredential; rasdial "vpngate" vpn vpn`;
-  const linuxL2tp = `sudo apt install -y network-manager-l2tp && nmcli connection add type l2tp con-name "vpngate" l2tp.gateway 节点IP l2tp.username vpn l2tp.password vpn ipsec.psk vpn ipsec.enable yes && nmcli connection up "vpngate"`;
-  const winOvpn = `curl -L -o vpngate.ovpn "配置链接" && start vpngate.ovpn`;
-  const linuxOvpn = `curl -L -o vpngate.ovpn "配置链接" && printf "vpn\\nvpn\\n" > auth.txt && sudo openvpn --config vpngate.ovpn --auth-user-pass auth.txt`;
+  const C = pfCmds('vpngate', '节点IP', '配置链接');
+  const quick = [
+    { ...C.winL2tpCreate, title: 'Windows L2TP（创建 + 连接）', cmd: `${C.winL2tpCreate.cmd}; ${C.winL2tpConnect.cmd}` },
+    { ...C.linuxL2tpCreate, title: 'Linux L2TP（创建 + 连接）' },
+    { ...C.winOvpnDownload, title: 'Windows OpenVPN（下载 + 导入）' },
+    { ...C.linuxOvpnCli, title: 'Linux OpenVPN（下载 + CLI 连接）' },
+  ];
   body.innerHTML = `
     <ol class="steps">${steps.map((st) => `<li>${st}</li>`).join('')}</ol>
-    <div class="section-title">快捷命令（替换占位后使用）</div>
-    <div class="pf-cmd"><div class="code-box">${esc(winCmd)}</div>
-      <button class="btn btn-sm" data-pf-copy="${esc(winCmd)}">复制</button></div>
-    <div class="pf-cmd" style="margin-top:8px"><div class="code-box">${esc(linuxL2tp)}</div>
-      <button class="btn btn-sm" data-pf-copy="${esc(linuxL2tp)}">复制</button></div>
-    <div class="pf-cmd" style="margin-top:8px"><div class="code-box">${esc(winOvpn)}</div>
-      <button class="btn btn-sm" data-pf-copy="${esc(winOvpn)}">复制</button></div>
-    <div class="pf-cmd" style="margin-top:8px"><div class="code-box">${esc(linuxOvpn)}</div>
-      <button class="btn btn-sm" data-pf-copy="${esc(linuxOvpn)}">复制</button></div>`;
+    <div class="section-title">快捷命令（替换占位符后使用；每条都列出「创建了什么」与配套的删除命令）</div>
+    ${quick.map(pfCmdBlockHtml).join('')}`;
   document.getElementById('guideMask').hidden = false;
   document.querySelectorAll('#guideBody [data-pf-copy]').forEach((b) => {
     b.addEventListener('click', () => copyText(b.dataset.pfCopy, '已复制'));

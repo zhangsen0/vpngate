@@ -14,6 +14,7 @@
 - **多端原生创建 VPN**：节点详情与优选卡片内置「多端」面板。
   - **🔐 L2TP/IPsec 原生（免客户端）**：VPNGate 节点由 SoftEther 驱动，普遍开放 L2TP/IPsec（PSK=`vpn`、账密 `vpn/vpn`），iOS/Android/Windows/macOS/Linux **系统内置 VPN 直接创建**，无需第三方客户端。Windows 一条命令 `Add-VpnConnection + rasdial` 创建并连接；Linux `network-manager-l2tp + nmcli` 原生创建。
   - OpenVPN 方式：Linux NetworkManager 原生创建；iOS/Android 官方 OpenVPN Connect 一键导入；Windows/macOS 官方客户端一键导入；均附下载、复制链接/命令入口。
+  - **可清理**：每条创建命令都列出「创建了什么」（下载的文件、Windows 注册表值 / 系统 VPN 连接、Linux 软件包 / NetworkManager 连接），并配一条可复制的「删除命令」；配置连不上或用不上时可完整清理，主页「使用说明」的快捷命令同样附带删除命令。
 - **即配即用**：一键下载 .ovpn 配置文件，或复制节点参数（IP / 端口 / 协议 / 账密）。
 - **轻量可信**：无框架单页应用，加载快；信息精炼，只展示关键指标。
 - **KV 少读写 + 操作日志**：配置读取走内存缓存（默认 60s，`CONFIG_CACHE_SECONDS` 可调），KV 只在必要时读写；登录/登出/配置变更/强制刷新/优选/下载等必要操作记录日志（KV 缓冲批量落盘，保留 200 条），页面「日志」面板可查。
