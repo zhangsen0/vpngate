@@ -20,9 +20,26 @@ const state = {
   country: '',
   sort: 'score-desc',
   lcOnly: false,         // 仅展示浏览器实测可达的节点
-  local: { results: {} }, // 浏览器实测结果：id → { reachable, rttMs, port, udp }
+  local: {
+    results: {},          // 浏览器实测结果：id → { reachable, rttMs, port, udp, why }
+    blocked: new Set(),   // 用户标记「连不上」的节点：本次会话内不再入选
+  },
   storage: 'memory',
 };
+
+try {
+  JSON.parse(sessionStorage.getItem('vpngate.blocked') || '[]').forEach((id) => state.local.blocked.add(id));
+} catch { /* 忽略 */ }
+
+/** 标记节点连不上（本次会话内跳过） */
+function blockNode(id) {
+  state.local.blocked.add(id);
+  try { sessionStorage.setItem('vpngate.blocked', JSON.stringify([...state.local.blocked])); } catch { /* 忽略 */ }
+}
+function clearBlocked() {
+  state.local.blocked.clear();
+  try { sessionStorage.removeItem('vpngate.blocked'); } catch { /* 忽略 */ }
+}
 
 // ==================== 基础工具 ====================
 
@@ -292,9 +309,11 @@ async function probeServerById(id) {
   const lp = state.config.localProbe || {};
   const ports = (lp.ports || [443]).slice(0, 2);
   const r = await probeLocalIp(s.ip, ports, lp.timeoutMs || 3000);
-  state.local.results[s.id] = { reachable: r.reachable, rttMs: r.rttMs, port: r.port || ports[0] };
+  state.local.results[s.id] = { reachable: r.reachable, rttMs: r.rttMs, port: r.port || ports[0], why: r.why };
+  const hint = r.reachable && r.why === 'http'
+    ? '<span class="chip warn">疑似网页服务（可能非 OpenVPN）</span>' : '';
   box.innerHTML = r.reachable
-    ? `<div class="section-title"><span class="badge ok">本机可达 · 端口 ${r.port} · ${r.rttMs}ms</span></div>`
+    ? `<div class="section-title"><span class="badge ok">本机可达 · 端口 ${r.port} · ${r.rttMs}ms</span>${hint}</div>`
     : '<div class="section-title"><span class="badge bad">本机不可达（连接超时）</span></div>';
   renderTable();
 }
@@ -392,7 +411,7 @@ async function runOptimize() {
 
   const maxNodes = Math.max(5, Math.min(500, lp.maxNodes || 120));
   const pool = [...state.servers]
-    .filter((s) => s.ip)
+    .filter((s) => s.ip && !state.local.blocked.has(s.id))
     .sort((a, b) => (b.score || 0) - (a.score || 0) || (a.pingMs || 1e9) - (b.pingMs || 1e9))
     .slice(0, maxNodes);
   if (!pool.length) {
@@ -419,7 +438,11 @@ async function runOptimize() {
   await Promise.all(Array.from({ length: Math.min(CONC, pool.length) }, async () => {
     while (idx < pool.length) {
       const s = pool[idx++];
-      const r = await probeLocalServer(s, ports, timeoutMs);
+      let r = await probeLocalServer(s, ports, timeoutMs);
+      // 单次超时可能只是网络抖动，补测一次再判不可达（只对超时节点重试，不拖慢整体）
+      if (!r.reachable && !r.udp && r.why === 'timeout') {
+        r = await probeLocalServer(s, ports, timeoutMs);
+      }
       state.local.results[s.id] = r;
       done++;
       if (r.reachable) okCount++;
@@ -446,7 +469,24 @@ async function runOptimize() {
         这些节点本机可能连不上。可切换网络（WiFi↔流量）、增大实测节点上限或稍后再试。</div>`);
       return;
     }
-    const list = await rank(reachableIds);
+    let list = await rank(reachableIds);
+    // 综合排序：静态评分 × 本机实测 RTT 惩罚 × 服务类型惩罚。
+    // 响应越慢越靠后；端口返回完整网页响应（疑似非 OpenVPN 服务）的节点大幅降权。
+    const finalScore = (r) => {
+      const lr = state.local.results[r.id];
+      const rtt = lr && lr.rttMs != null ? lr.rttMs : 9999;
+      const typeF = lr && lr.why === 'http' ? 0.35 : 1;
+      return (r.score || 0) * (1000 / (1000 + rtt)) * typeF;
+    };
+    const maxRtt = Math.max(0, Number(lp.maxRttMs) || 0);
+    if (maxRtt > 0) {
+      const kept = list.filter((r) => {
+        const lr = state.local.results[r.id];
+        return !lr || lr.rttMs == null || lr.rttMs <= maxRtt;
+      });
+      if (kept.length) list = kept; // 全被过滤时保留原结果，避免空列表
+    }
+    list.sort((a, b) => finalScore(b) - finalScore(a));
     const maxUdp = Math.max(0, Math.min(50, lp.maxUdpCandidates || 8));
     if (maxUdp > 0 && udpCandidates.length) {
       // UDP 端口浏览器无法探测，附带展示评分前 N 个候选供试连
@@ -461,7 +501,7 @@ async function runOptimize() {
     }
     renderOptCards(list, { mode: 'local' });
     body.insertAdjacentHTML('afterbegin', `<div class="section-title" style="color:var(--ok,#30a46c)">
-      ✅ 浏览器实测 ${pool.length} 个节点：TCP 可达 ${reachableIds.length} 个，已按权重重新评分
+      ✅ 浏览器实测 ${pool.length} 个节点：TCP 可达 ${reachableIds.length} 个，已按「静态评分 + 本机实测延迟 + 服务类型」综合重排
       ${maxUdp > 0 && udpCandidates.length ? `；另附 ${Math.min(maxUdp, udpCandidates.length)} 个 UDP 候选（标「UDP 未测·试连」）` : ''}。</div>`);
   } catch (e) {
     body.innerHTML = `<div class="empty">优选失败：${esc(e.message)}</div>`;
@@ -470,23 +510,26 @@ async function runOptimize() {
 
 /** 渲染优选结果卡片（可达性标记统一取自 state.local.results 的浏览器实测结果） */
 function renderOptCards(ranked, data) {
+  // 渲染时按黑名单过滤，但闭包保留完整列表，点「恢复」即可还原
+  const shown = ranked.filter((r) => !state.local.blocked.has(r.id));
   const chipOf = (id) => {
     const r = state.local.results[id];
     if (!r) return '<span class="chip dim">本机未测</span>';
     if (r.udp) return '<span class="chip warn" title="UDP 端口浏览器无法探测，需试连">UDP 未测·试连</span>';
-    return r.reachable
-      ? `<span class="chip ok">本机✓ ${r.rttMs}ms</span>`
-      : '<span class="chip bad">本机✗ 超时</span>';
+    if (!r.reachable) return '<span class="chip bad">本机✗ 超时</span>';
+    if (r.why === 'http') return `<span class="chip warn" title="端口返回了完整网页响应，可能不是 OpenVPN 服务，已在排序中降权">本机✓ ${r.rttMs}ms · 疑似网页服务</span>`;
+    return `<span class="chip ok" title="TLS/协议不匹配（符合 OpenVPN 服务特征），TCP 可达">本机✓ ${r.rttMs}ms</span>`;
   };
   const body = document.getElementById('optBody');
   body.innerHTML = `
     <div class="section-title">${data.mode === 'local'
-      ? `浏览器实测可达节点（共 ${ranked.length} 个，按权重评分排序）`
-      : `静态评分前 ${ranked.length} 个节点（未启用实测或本机无可达节点时展示）`}</div>
+      ? `浏览器实测可达节点（共 ${shown.length} 个，按综合评分排序）`
+      : `静态评分前 ${shown.length} 个节点（未启用实测或本机无可达节点时展示）`}</div>
     <div class="row-actions" style="margin-bottom:10px">
       <button class="btn btn-primary" data-act="opt-probe">🔍 重新实测</button>
+      ${state.local.blocked.size ? `<button class="btn" data-act="opt-clear-blocked">恢复已跳过的 ${state.local.blocked.size} 个节点</button>` : ''}
     </div>
-    ${ranked.map((r, i) => {
+    ${shown.map((r, i) => {
       const lr = state.local.results[r.id];
       const rttShow = lr && lr.rttMs != null ? `${lr.rttMs}ms` : (lr && lr.udp ? '需试连' : '-');
       const portShow = (lr && lr.port) || r.port || '-';
@@ -501,6 +544,7 @@ function renderOptCards(ranked, data) {
         <div class="opt-meta">
           <div class="rtt">${rttShow}</div>
           <div style="margin-top:4px;display:flex;gap:6px;justify-content:flex-end">
+            <button class="btn btn-sm" data-act="opt-block" data-id="${esc(r.id)}" title="试连失败后点这里，本次会话不再推荐该节点">连不上</button>
             <button class="btn btn-sm" data-act="opt-pf" data-id="${esc(r.id)}">多端</button>
             <button class="btn btn-sm" data-act="opt-ovpn" data-id="${esc(r.id)}">下载配置</button>
           </div>
@@ -508,15 +552,30 @@ function renderOptCards(ranked, data) {
       </div>`;
     }).join('')}
     <div class="section-title">「重新实测」用你的浏览器直连各节点实际 TCP 端口（不另开窗口）：
-      仅连接超时判为不可达（TCP 未建立），端口有响应（含协议断开/证书错误）即视为可达；
-      UDP 端口浏览器无法探测，标注「UDP 未测·试连」。
-      ⚠️ <b>本机✓ 仅代表网络层可达</b>，不代表 OpenVPN 服务一定可用：连不上时换节点重试，
-      或改试「🔐 L2TP 原生」（SoftEther 默认开启 L2TP/IPsec，国内网络普遍可连）。</div>`;
+      仅连接超时判为不可达，超时节点自动补测一次；UDP 端口浏览器无法探测，标注「UDP 未测·试连」。
+      结果按 <b>静态评分 × 本机实测延迟 × 服务类型</b> 综合排序：延迟高的自动靠后；
+      端口返回完整网页响应（标「疑似网页服务」）的节点大概率没跑 OpenVPN，已降权。
+      ⚠️ <b>浏览器只能验证 TCP 端口可达</b>：无法发 OpenVPN 协议包、无法验证账密/认证、无法测 UDP，
+      所以「本机✓」不等于一定能连上（节点也可能刚下线）。连不上时点卡片「连不上」跳过（本次会话不再入选），
+      换下一个试试，或改用「🔐 L2TP 原生」（SoftEther 默认开启 L2TP/IPsec，国内网络普遍可连）。</div>`;
   document.querySelectorAll('[data-act="opt-ovpn"]').forEach((btn) => {
     btn.addEventListener('click', () => downloadOvpn(btn.dataset.id));
   });
   document.querySelectorAll('[data-act="opt-pf"]').forEach((btn) => {
     btn.addEventListener('click', () => openPlatformModal(btn.dataset.id));
+  });
+  document.querySelectorAll('[data-act="opt-block"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      blockNode(btn.dataset.id);
+      renderOptCards(ranked, data);
+      toast('已跳过该节点，下次实测也不会入选（本次会话）', 'ok');
+    });
+  });
+  const clearBtn = document.querySelector('[data-act="opt-clear-blocked"]');
+  if (clearBtn) clearBtn.addEventListener('click', () => {
+    clearBlocked();
+    renderOptCards(ranked, data);
+    toast('已恢复被跳过的节点', 'ok');
   });
   const probeBtn = document.querySelector('[data-act="opt-probe"]');
   if (probeBtn) probeBtn.addEventListener('click', runOptimize);
@@ -533,16 +592,17 @@ async function probeLocalIp(ip, ports, timeoutMs) {
         mode: 'no-cors', cache: 'no-store', signal: ctrl.signal, referrerPolicy: 'no-referrer',
       });
       clearTimeout(timer);
-      return { reachable: true, rttMs: Math.round(performance.now() - t0), port };
+      // 端口返回了完整 HTTPS 响应 → 大概率是网页/管理服务，而非 OpenVPN（结果中降权标注）
+      return { reachable: true, rttMs: Math.round(performance.now() - t0), port, why: 'http' };
     } catch (e) {
       clearTimeout(timer);
       const dt = Math.round(performance.now() - t0);
       // 只有超时才是真正的不可达（TCP 未建立：被墙/丢包/端口无响应）。
       // 任何非超时的失败（无论快慢）都发生在 TCP 建立之后——
-      // 说明端口有服务在响应（OpenVPN 收到 TLS 请求后断开、证书错误等）→ 视为可达。
-      // 旧逻辑把「快速失败=端口拒绝」误判为不可达，会误杀真实可达节点（VPNGate 443 常见快速断开）。
+      // 说明端口有服务在响应（OpenVPN 收到非协议请求后断开、TLS/证书不匹配等）→ 视为可达，
+      // 且这种「TLS/协议不匹配」比返回网页响应更符合 OpenVPN 服务特征，优先推荐。
       if (e.name === 'AbortError' || e.name === 'TimeoutError') continue; // 超时，试下一端口
-      return { reachable: true, rttMs: dt, port, why: 'resp' };
+      return { reachable: true, rttMs: dt, port, why: 'tls' };
     }
   }
   return { reachable: false, rttMs: null, why: 'timeout' };

@@ -58,9 +58,11 @@ fi
 echo "==> 4/7 生成部署期绑定配置并 wrangler 部署（手动直传部署包）"
 # wrangler 部署时会按 CWD 的 wrangler.toml 同步项目级 KV 绑定，
 # 因此生成带真实 KV id 的配置并从 dist 目录执行，部署即带上绑定。
+# compatibility_date 必须保持较新：CF 后端（2026-10 api-version）用过期日期
+# 发布 Functions 会报 "Failed to publish your Function: Unknown internal error occurred"。
 cat > "${ROOT}/dist/wrangler.toml" <<EOF
 name = "vpngate"
-compatibility_date = "2025-09-01"
+compatibility_date = "2026-10-01"
 pages_build_output_dir = "."
 
 [[kv_namespaces]]
@@ -68,10 +70,18 @@ binding = "VPNGATE_CFG"
 id = "${KV_ID}"
 EOF
 export CLOUDFLARE_API_TOKEN="${CF_TOKEN}" CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT}"
+DEPLOY_LOG="$(mktemp)"
 (
   cd "${ROOT}/dist" && npx -y wrangler@4 pages deploy . \
     --project-name "${CF_PROJECT}" --branch main --commit-dirty=true
-) 2>&1 | grep -E "Deployment complete|pages.dev" || true
+) > "${DEPLOY_LOG}" 2>&1 || { echo "✗ wrangler 部署失败" >&2; cat "${DEPLOY_LOG}" >&2; exit 1; }
+grep -E "Deployment complete|pages.dev|ERROR" "${DEPLOY_LOG}" || true
+# 必须确认实际发布成功（CF 后端可能在 wrangler 输出后仍判失败），避免误报「部署完成」
+if ! grep -q "Deployment complete" "${DEPLOY_LOG}"; then
+  echo "✗ 部署未发布成功（未出现 Deployment complete）" >&2
+  cat "${DEPLOY_LOG}" >&2
+  exit 1
+fi
 
 echo "==> 5/7 部署后设置 KV 绑定与 APP_PASSWORD（production + preview）"
 ENV_JSON="{}"

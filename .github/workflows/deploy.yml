@@ -36,7 +36,8 @@ jobs:
         run: |
           cat > wrangler.toml <<EOF
           name = "vpngate"
-          compatibility_date = "2025-09-01"
+          # 过期日期会让 CF 后端发布 Functions 时报 "Unknown internal error occurred"
+          compatibility_date = "2026-10-01"
           pages_build_output_dir = "dist"
 
           [[kv_namespaces]]

@@ -4,5 +4,5 @@
 #       Pages 项目 deployment_configs（绑定名 VPNGATE_CFG、环境变量 APP_PASSWORD）。
 # 本地开发如需 KV，请用：wrangler pages dev public --kv VPNGATE_CFG
 name = "vpngate"
-compatibility_date = "2025-09-01"
+compatibility_date = "2026-10-01"
 pages_build_output_dir = "public"

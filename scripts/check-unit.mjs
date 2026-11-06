@@ -51,7 +51,7 @@ test('validateConfig：越界值收敛、非法类型回退默认', () => {
   const { config, errors } = validateConfig({
     fetch: { timeoutMs: 999999, cacheSeconds: 1, maxServers: -5 },
     filters: { maxPingMs: 50000, hostRegex: '([' },
-    localProbe: { ports: [443, 99999, 'abc'], timeoutMs: 999999, maxNodes: 999999 },
+    localProbe: { ports: [443, 99999, 'abc'], timeoutMs: 999999, maxNodes: 999999, maxRttMs: 999999 },
     weights: { score: 999, ping: -1 },
     optimize: { cacheSeconds: 99999 },
   });
@@ -64,6 +64,7 @@ test('validateConfig：越界值收敛、非法类型回退默认', () => {
   assert.deepEqual(config.localProbe.ports, [443], '非法端口应被过滤');
   assert.equal(config.localProbe.timeoutMs, 10000, '实测超时应收敛到上限');
   assert.equal(config.localProbe.maxNodes, 500, '实测节点数应收敛到上限');
+  assert.equal(config.localProbe.maxRttMs, 10000, '实测 RTT 上限应收敛到上限');
   assert.equal(config.weights.score, 10);
   assert.equal(config.weights.ping, 0);
   assert.equal(config.probe, undefined, '旧 CF 边缘探测配置应被清理');
@@ -81,6 +82,7 @@ test('mergeConfig：部分更新保留其余默认', () => {
   const cfg = mergeConfig({ optimize: { topN: 5 } });
   assert.equal(cfg.optimize.topN, 5);
   assert.equal(cfg.fetch.timeoutMs, DEFAULTS.fetch.timeoutMs);
+  assert.equal(cfg.localProbe.maxRttMs, 0, '实测 RTT 上限默认 0（不过滤，仅降权）');
 });
 
 // ==================== 解析 ====================

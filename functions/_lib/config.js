@@ -112,6 +112,8 @@ export const DEFAULTS = {
     maxNodes: 120,
     /** UDP 节点浏览器无法探测：实测后额外展示评分前 N 个 UDP 候选（标注需试连） */
     maxUdpCandidates: 8,
+    /** 实测 RTT 上限(ms)：超过则不进入优选结果；0=不过滤（仅按综合分降权） */
+    maxRttMs: 0,
   },
   optimize: {
     /** 优选返回的节点条数 */
@@ -198,6 +200,8 @@ export const SCHEMA = [
   { key: 'localProbe.timeoutMs', group: '浏览器实测', label: '实测单端口超时(ms)', type: 'int', min: 500, max: 10000, unit: 'ms' },
   { key: 'localProbe.maxNodes', group: '浏览器实测', label: '实测节点数上限(按评分取前 N)', type: 'int', min: 5, max: 500 },
   { key: 'localProbe.maxUdpCandidates', group: '浏览器实测', label: 'UDP 候选展示数(需试连)', type: 'int', min: 0, max: 50 },
+  { key: 'localProbe.maxRttMs', group: '浏览器实测', label: '实测 RTT 上限(ms)', type: 'int', min: 0, max: 10000, unit: 'ms',
+    hint: '0=不过滤，仅按综合分降权；超过该延迟的节点不进入优选结果' },
 
   // —— 优选结果 ——
   { key: 'optimize.topN', group: '优选结果', label: '优选返回条数', type: 'int', min: 1, max: 50 },
@@ -296,6 +300,7 @@ export function validateConfig(cfg) {
   config.localProbe.timeoutMs = clamp(intOf(withDefault('localProbe.timeoutMs', 3000), 3000), 500, 10000);
   config.localProbe.maxNodes = clamp(intOf(withDefault('localProbe.maxNodes', 120), 120), 5, 500);
   config.localProbe.maxUdpCandidates = clamp(intOf(withDefault('localProbe.maxUdpCandidates', 8), 8), 0, 50);
+  config.localProbe.maxRttMs = clamp(intOf(withDefault('localProbe.maxRttMs', 0), 0), 0, 10000);
   config.optimize.topN = clamp(intOf(withDefault('optimize.topN', 8), 8), 1, 50);
 
   // 清理旧版本 KV 配置残留的 CF 边缘探测字段（服务端已不再提供探测能力）
