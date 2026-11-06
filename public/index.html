@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="VPNGate 节点优选：拉取实时节点，可配置权重与探测参数，一键优选并生成可用 OpenVPN 节点配置" />
+  <meta name="description" content="VPNGate 节点优选：拉取实时节点，按权重评分，浏览器本地实测连通性，一键生成可用 OpenVPN 节点配置" />
   <title>VPNGate 优选</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233b82f6'/%3E%3Cpath d='M34 12 18 36h12l-4 16 18-26H30z' fill='white'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="/style.css?v=6" />
+  <link rel="stylesheet" href="/style.css?v=7" />
 </head>
 <body data-theme="dark">
   <header class="topbar">
@@ -18,7 +18,7 @@
       </span>
       <span class="brand-name">
         <span class="title">VPNGate <em>优选</em></span>
-        <span class="sub">节点优选 · 连通实测 · 配置生成</span>
+        <span class="sub">节点优选 · 浏览器实测 · 配置生成</span>
       </span>
       <span class="status" id="statusText">加载中…</span>
     </div>
@@ -56,10 +56,7 @@
         <option value="">全部国家</option>
       </select>
       <select class="select" id="sortSelect" title="排序方式"></select>
-      <label class="check" title="仅显示 CF 边缘探测可达的节点">
-        <input type="checkbox" id="reachableOnly" /> 仅可连通
-      </label>
-      <label class="check" title="仅显示本机校验为可达的节点">
+      <label class="check" title="仅显示浏览器本地实测可达的节点">
         <input type="checkbox" id="lcOnly" /> 仅本机可达
       </label>
       <span class="meta" id="metaText"></span>
@@ -79,7 +76,6 @@
               <th class="num">在线</th>
               <th class="num">会话</th>
               <th>本机</th>
-              <th>操作</th>
             </tr>
           </thead>
           <tbody id="serverTbody"></tbody>
@@ -149,22 +145,6 @@
     </div>
   </div>
 
-  <!-- 本机连通性校验 -->
-  <div class="modal-mask" id="lcMask" hidden>
-    <div class="modal modal-wide">
-      <div class="modal-head">
-        <span>📶 本机连通性校验</span>
-        <div class="modal-actions">
-          <button class="btn" id="btnLcProbe" title="页面为 http 访问时可直接探测">浏览器直连</button>
-          <button class="btn" id="btnLcCopyCmd" title="生成可在本机终端运行的 TCP 探测命令">复制命令</button>
-          <button class="btn" id="btnLcDownload" title="下载单文件探测页，本机 http 打开后浏览器直测">下载探测页</button>
-          <button class="btn-close" id="btnCloseLc" title="关闭">×</button>
-        </div>
-      </div>
-      <div class="modal-body" id="lcBody"></div>
-    </div>
-  </div>
-
   <!-- 操作日志 -->
   <div class="modal-mask" id="logMask" hidden>
     <div class="modal modal-wide">
@@ -188,6 +168,6 @@
   </footer>
 
   <div class="toast" id="toast" hidden></div>
-  <script src="/app.js?v=20"></script>
+  <script src="/app.js?v=22"></script>
 </body>
 </html>

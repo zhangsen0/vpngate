@@ -10,20 +10,19 @@
  *  PUT  /api/config/storage     切换存储模式（auto / memory / kv）
  *  POST /api/config/storage/sync  手动把内存配置同步写入 KV
  *  GET  /api/servers?refresh=1  服务器列表（默认走缓存；refresh=1 强制刷新）
- *  POST /api/optimize           执行优选（可覆盖 country/topN/requireReachable，结果短时缓存）
+ *  POST /api/optimize           纯静态评分排序（可覆盖 country/topN，或传 ids 只排浏览器实测可达集合）
  *  GET  /api/ovpn?id=...        生成并返回 .ovpn 配置文本
  *  GET  /api/node?id=...        返回节点参数摘要
- *  POST /api/probe              对指定 IP 做连通性探测 { ip, ports? }
  *  GET  /api/logs?limit=50      读取操作日志（需登录）
+ *
+ * 说明：连通性探测一律由浏览器本地完成，服务端不提供任何探测接口。
  */
 
-import { json, readJson, queryParams, sha1Hex } from '../_lib/util.js';
+import { json, readJson, queryParams } from '../_lib/util.js';
 import { loadConfig, saveConfig, resetConfig, setStorageMode, syncToKv, DEFAULTS, SCHEMA } from '../_lib/config.js';
 import { getServers, LIGHT_FIELDS } from '../_lib/sources.js';
-import { runOptimize } from '../_lib/optimize.js';
+import { rankServers } from '../_lib/optimize.js';
 import { buildOvpn, nodeParams } from '../_lib/ovpn.js';
-import { probeServer } from '../_lib/probe.js';
-import { probeOvpnBatch } from '../_lib/ovpn-probe.js';
 import {
   issueToken, authCookieHeaders, clearCookieHeaders, safeEqual, isAuthed,
   checkLoginLock, recordLoginFail, clearLoginLock, signFileToken,
@@ -143,52 +142,6 @@ async function route(method, path, request, env) {
   }
 
   // —— 服务器列表 ——
-  if (method === 'POST' && path === 'probe-ovpn') {
-    // CF 边缘 OpenVPN 服务真实探测：{ ids: [...] }（服务器节点）或 { ips: [...] }（任意公网 IP），登录保护
-    if (!(await isAuthed(request, env))) return json({ ok: false, error: '未授权' }, 401);
-    const body = await readJson(request).catch(() => null);
-    const { config } = await loadConfig(env);
-    // CF 单请求子请求受限：单次探测最多 25 个，前端分批调用
-    const maxNodes = Math.min(Math.max(Number((config.ovpnProbe || {}).maxNodes) || 25, 1), 25);
-    const mode = body && body.mode === 'https' ? 'https' : 'ovpn';
-    let targets = [];
-    const ids = Array.isArray(body && body.ids) ? body.ids.map(String).slice(0, 25) : [];
-    const ips = Array.isArray(body && body.ips) ? body.ips.map(String).slice(0, 25) : [];
-    if (ids.length) {
-      const { servers: all } = await getServers(env, config);
-      const byId = new Map(all.map((x) => [x.id, x]));
-      targets = ids
-        .filter((id) => byId.has(id))
-        .slice(0, maxNodes)
-        .map((id) => ({ id, ip: byId.get(id).ip }));
-    } else if (ips.length) {
-      // 仅允许公网 IP（防 SSRF：过滤保留/私有段），用于外部对照验证
-      targets = ips
-        .filter((ip) => /^\d{1,3}(\.\d{1,3}){3}$/.test(ip) && !/^(0\.|10\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|224\.|240\.|255\.)/.test(ip))
-        .slice(0, maxNodes)
-        .map((ip) => ({ id: ip, ip }));
-    }
-    if (!targets.length) return json({ ok: true, results: {}, note: '无匹配目标' });
-    let results;
-    if (mode === 'https') {
-      // 对照模式：标准 HTTPS 握手（忽略证书），用于识别 443 上是否运行 HTTPS 管理服务
-      results = {};
-      await Promise.all(targets.map(async (t) => {
-        const t0 = Date.now();
-        try {
-          const r = await fetch(`https://${t.ip}/`, { signal: AbortSignal.timeout(5000) });
-          results[t.id] = { online: r.ok, https: true, status: r.status, rttMs: Date.now() - t0, error: null };
-        } catch (e) {
-          results[t.id] = { online: false, https: true, rttMs: Date.now() - t0, error: e.name || e.message };
-        }
-      }));
-    } else {
-      results = await probeOvpnBatch(config, targets);
-    }
-    log(env, 'ovpn-probe', `CF 边缘 OpenVPN 探测 ${targets.length} 个目标（在线 ${Object.values(results).filter((r) => r.online).length}）`, clientIp);
-    return json({ ok: true, results });
-  }
-
   if (method === 'GET' && path === 'servers') {
     const q = queryParams(request.url);
     const { config } = await loadConfig(env);
@@ -215,58 +168,25 @@ async function route(method, path, request, env) {
     });
   }
 
-  // —— 优选（结果短时缓存，避免重复探测） ——
+  // —— 优选（纯静态评分排序；连通性由浏览器本地实测，服务端不探测） ——
   if (method === 'POST' && path === 'optimize') {
     const body = await readJson(request);
     const { config } = await loadConfig(env);
-    // 允许请求体临时覆盖部分参数（不落盘）：country / topN / requireReachable / probeCount / refresh
+    // 允许请求体临时覆盖部分参数（不落盘）：country / topN / refresh / ids（浏览器实测可达集合）
     const overrides = body && typeof body === 'object' ? body : {};
     const ovCountry = overrides.country ? String(overrides.country).toUpperCase().split(',').map((s) => s.trim()).filter(Boolean) : null;
     const ovTopN = overrides.topN ? Number.parseInt(overrides.topN, 10) : null;
-    const ovReq = typeof overrides.requireReachable === 'boolean' ? overrides.requireReachable : null;
-    const ovProbeCount = overrides.probeCount ? Number.parseInt(overrides.probeCount, 10) : null;
     const ovRefresh = overrides.refresh === true || overrides.refresh === '1';
     const ovIds = Array.isArray(overrides.ids) ? overrides.ids.filter((x) => typeof x === 'string' && x) : null;
     if (ovCountry) config.filters.enabledCountryCodes = ovCountry;
     if (ovTopN) config.optimize.topN = ovTopN;
-    if (ovReq !== null) config.probe.requireReachable = ovReq;
-    if (ovProbeCount) config.probe.probeCount = Math.min(100, Math.max(1, ovProbeCount));
-
-    // 缓存键：仅与影响优选结果的配置+覆盖参数相关
-    const sig = await sha1Hex(JSON.stringify({
-      d: config.dataSources,
-      f: config.filters,
-      w: config.weights,
-      n: config.norm,
-      p: { ports: config.probe.ports, timeoutMs: config.probe.timeoutMs, probeCount: config.probe.probeCount, concurrency: config.probe.concurrency, requireReachable: config.probe.requireReachable, reachableBoost: config.probe.reachableBoost },
-      o: config.optimize.topN,
-      ov: { c: ovCountry, n: ovTopN, r: ovReq, pc: ovProbeCount, ref: ovRefresh, ids: ovIds },
-    }));
-    const ttl = Math.max(0, config.optimize.cacheSeconds || 0);
-    const cacheKey = `https://vpngate.local/cache/optimize/${sig}`;
-    if (ttl > 0) {
-      try {
-        const cached = await caches.default.match(cacheKey);
-        if (cached) {
-          const data = await cached.json();
-          return json({ ok: true, cacheHit: true, ...data });
-        }
-      } catch { /* 缓存不可用则直接执行 */ }
-    }
 
     const result = await getServers(env, config, { force: ovRefresh });
-    const { ranked, probed } = await runOptimize(result.servers, config, undefined, 15000, ovIds ? { ids: ovIds } : {});
-    log(env, 'optimize', ovIds ? `本机实测模式：id 集合 ${ovIds.length} 个 / 达标 ${ranked.length} 个` : `候选 ${probed.length} 个 / 达标 ${ranked.length} 个`, clientIp);
-
-    if (ttl > 0) {
-      try {
-        await caches.default.put(cacheKey, new Response(
-          JSON.stringify({ ranked, probed, statuses: result.statuses, updatedAt: result.updatedAt }),
-          { headers: { 'Cache-Control': `s-maxage=${ttl}` } },
-        ));
-      } catch { /* 写缓存失败不影响结果 */ }
-    }
-    return json({ ok: true, ranked, probed, statuses: result.statuses, updatedAt: result.updatedAt });
+    const { ranked } = rankServers(result.servers, config, ovIds);
+    log(env, 'optimize', ovIds
+      ? `浏览器实测模式：可达 ${ovIds.length} 个 / 入选 ${ranked.length} 个`
+      : `静态评分排序：入选 ${ranked.length} 个`, clientIp);
+    return json({ ok: true, ranked, statuses: result.statuses, updatedAt: result.updatedAt });
   }
 
   // —— 免登录下载链接（带短期令牌，供外部客户端如 OpenVPN Connect 直接导入） ——
@@ -328,16 +248,6 @@ async function route(method, path, request, env) {
     if (!server) return json({ ok: false, error: '未找到该服务器，可能已从列表移除' }, 404);
     const ovpn = buildOvpn(server, config);
     return json({ ok: true, node: nodeParams(server, ovpn) });
-  }
-
-  // —— 单点探测 ——
-  if (method === 'POST' && path === 'probe') {
-    const body = await readJson(request);
-    if (!body || !body.ip) return json({ ok: false, error: '缺少 ip' }, 400);
-    const { config } = await loadConfig(env);
-    const ports = Array.isArray(body.ports) && body.ports.length > 0 ? body.ports : config.probe.ports;
-    const result = await probeServer({ ip: body.ip }, ports, config.probe.timeoutMs);
-    return json({ ok: true, ...result, ports });
   }
 
   // —— 操作日志 ——

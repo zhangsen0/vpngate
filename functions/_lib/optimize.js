@@ -1,16 +1,9 @@
 /**
- * optimize.js — 筛选与优选评分
+ * optimize.js — 筛选与静态评分排序（纯计算，无任何网络探测）
  *
- * 优选流程（全部参数来自配置，可前台调整）：
- *  1. 按 filters 剔除不符合条件的服务器；
- *  2. 对剩余服务器计算静态归一化评分（weights × 归一化值）；
- *  3. 取静态评分前 probe.probeCount 名做 TCP 连通性探测（并发受 concurrency 限制）；
- *  4. 可连通节点获得 reachableBoost 加成；requireReachable=true 时剔除不可连通节点；
- *  5. 按最终评分排序，返回前 optimize.topN 名。
+ * 架构约定：连通性探测只在用户浏览器内完成（见前端 localProbe），
+ * 服务端仅按配置做筛选、归一化评分与排序，因此不存在边缘探测超时风险。
  */
-
-import { chunkParallel } from './util.js';
-import { probeServer } from './probe.js';
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
@@ -57,61 +50,21 @@ export function scoreServer(s, config) {
 }
 
 /**
- * 执行完整优选。
- * @param {Array} servers - 全量服务器（含 base64 与否均可，仅用轻量字段）
+ * 按配置筛选、评分并排序，返回前 topN 名。
+ * @param {Array} servers - 全量服务器
  * @param {object} config - 生效配置
- * @param {Function} [probeFn] - 探测函数（默认 probeServer；单测可注入桩函数）
- * @param {number} [budgetMs] - 整体探测时间预算（默认 20000，平台 30s 墙钟内兜底）
- * @param {object} [opts] - 可选：{ ids: string[] } 本机实测模式——只对给定 id 集合按静态权重评分排序，跳过边缘探测
- * @returns {Promise<{ranked: Array, probed: Array}>}
+ * @param {string[]|null} [ids] - 仅保留这些 id（浏览器实测可达集合）；null 表示不过滤
+ * @returns {{ranked: Array}} 排名结果，每项附带 baseScore / score
  */
-export async function runOptimize(servers, config, probeFn = probeServer, budgetMs = 15000, opts = {}) {
-  const filtered = applyFilters(servers, config);
-
-  // 静态评分排序，取前 probeCount 名探测
-  const withBase = filtered.map((s) => ({ ...s, baseScore: scoreServer(s, config) }));
-  withBase.sort((a, b) => b.baseScore - a.baseScore);
-
-  // 本机实测模式：ids 集合已在浏览器直连筛过，直接按权重评分排序（跳过边缘探测）
-  if (opts && Array.isArray(opts.ids)) {
-    const inIds = new Set(opts.ids);
-    const probed = withBase.filter((s) => inIds.has(s.id))
-      .map((s) => ({ ...s, reachable: true, rttMs: null, port: null, score: s.baseScore }));
-    probed.sort((a, b) => b.score - a.score);
-    return {
-      ranked: probed.slice(0, config.optimize.topN),
-      probed: probed.map(({ id, hostname, ip, countryShort, baseScore, score, reachable, rttMs, port }) => ({
-        id, hostname, ip, countryShort, baseScore, score, reachable, rttMs, port,
-      })),
-    };
-  }
-
-  const candidates = withBase.slice(0, config.probe.probeCount);
-
-  // 并发探测：整体时间预算兜底，超时未返回的候选标记为不可达。
-  // 原因：cloudflare:sockets 走边缘 egress，并发连接可能被限流挂起，
-  // 逐批 Promise.all 会被最慢节点拖死；预算保证请求在平台墙钟内返回。
-  const budget = Math.max(1000, budgetMs);
-  const probed = await (async () => {
-    const results = new Array(candidates.length).fill(null);
-    const tasks = candidates.map((s, i) => (async () => {
-      const p = await probeFn(s, config.probe.ports, config.probe.timeoutMs);
-      results[i] = { ...s, ...p, score: p.reachable ? s.baseScore * (1 + config.probe.reachableBoost) : s.baseScore };
-    })());
-    const done = Promise.all(tasks.map((t) => t.catch(() => {})));
-    const guard = new Promise((r) => setTimeout(r, budget));
-    await Promise.race([done, guard]);
-    return candidates.map((s, i) => results[i] || { ...s, reachable: false, rttMs: null, port: null, error: 'probe timeout', score: s.baseScore });
-  })();
-
-  // 是否仅保留可连通节点
-  const pool = config.probe.requireReachable ? probed.filter((p) => p.reachable) : probed;
-  pool.sort((a, b) => b.score - a.score);
-
-  return {
-    ranked: pool.slice(0, config.optimize.topN),
-    probed: probed.map(({ id, hostname, ip, countryShort, baseScore, score, reachable, rttMs, port }) => ({
-      id, hostname, ip, countryShort, baseScore, score, reachable, rttMs, port,
-    })),
-  };
+export function rankServers(servers, config, ids = null) {
+  const inIds = Array.isArray(ids) ? new Set(ids) : null;
+  const ranked = applyFilters(servers, config)
+    .filter((s) => !inIds || inIds.has(s.id))
+    .map((s) => {
+      const score = scoreServer(s, config);
+      return { ...s, baseScore: score, score };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, config.optimize.topN);
+  return { ranked };
 }

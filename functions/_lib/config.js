@@ -51,7 +51,7 @@ export const DEFAULT_SOURCES = [
 ];
 
 export const DEFAULTS = {
-  version: 2,
+  version: 3,
   dataSources: DEFAULT_SOURCES,
   fetch: {
     /** 单数据源拉取超时(ms)（镜像源实测 <1s；官方不可达时快速交给镜像接管） */
@@ -101,47 +101,21 @@ export const DEFAULTS = {
     /** 归一化参考：会话数目标值（超过视为拥挤，越小越好） */
     sessionsTarget: 50,
   },
-  ovpnProbe: {
-    // CF 边缘真实 OpenVPN 协议探测：向节点发 HARD_RESET 首包，回 HARD_RESET_SERVER 即服务在线
-    enabled: true,
-    ports: [443],
-    timeoutMs: 4000,
-    concurrency: 6,
-    maxNodes: 120,
-  },
   localProbe: {
-    /** 页面内浏览器直连实测：对优选 IP 逐个发起 https 探测（反映本机网络真实可达性） */
+    /** 页面内浏览器直连实测：对节点实际 TCP 端口发起 https 探测（反映本机网络真实可达性） */
     enabled: true,
     /** 实测端口（仅 TCP；浏览器无法发 UDP，优先 443） */
     ports: [443],
     /** 单端口超时(ms) */
     timeoutMs: 3000,
-    /** （兼容保留，不再参与判定）旧判定曾把快速失败视为端口拒绝 */
-    fastFailMs: 1200,
     /** 实测节点数上限（按评分取前 N 名实测，避免几百个节点全部探测过慢） */
     maxNodes: 120,
     /** UDP 节点浏览器无法探测：实测后额外展示评分前 N 个 UDP 候选（标注需试连） */
     maxUdpCandidates: 8,
   },
-  probe: {
-    /** 连通性探测端口列表（TCP），按序探测取首个成功 */
-    ports: [443, 1194],
-    /** 单次探测超时(ms) */
-    timeoutMs: 2000,
-    /** 静态评分前 N 名进入连通性探测 */
-    probeCount: 10,
-    /** 探测并发数 */
-    concurrency: 20,
-    /** 优选结果是否仅保留可连通的节点 */
-    requireReachable: true,
-    /** 可连通节点评分加成（比例，0~1，加到总分上） */
-    reachableBoost: 0.2,
-  },
   optimize: {
     /** 优选返回的节点条数 */
     topN: 8,
-    /** 优选结果缓存时长(秒)：相同参数下避免重复探测；0 关闭缓存 */
-    cacheSeconds: 30,
   },
   ovpn: {
     /** 生成的 .ovpn 中是否把 remote 主机名改写为 IP（直连优选 IP） */
@@ -217,25 +191,16 @@ export const SCHEMA = [
   { key: 'norm.uptimeRefHours', group: '归一化参考', label: '在线时长目标值(小时)', type: 'int', min: 1, max: 87600, unit: 'h' },
   { key: 'norm.sessionsTarget', group: '归一化参考', label: '会话数目标值', type: 'int', min: 1, max: 10000 },
 
-  // —— 连通性探测 ——
-  { key: 'localProbe.enabled', group: '本机实测', label: '启用页面内浏览器直连实测', type: 'boolean' },
-  { key: 'localProbe.ports', group: '本机实测', label: '实测端口列表(仅 TCP)', type: 'arrayNumber',
-    placeholder: '443' },
-  { key: 'localProbe.timeoutMs', group: '本机实测', label: '实测单端口超时(ms)', type: 'int', min: 500, max: 10000, unit: 'ms' },
-  { key: 'localProbe.maxNodes', group: '本机实测', label: '实测节点数上限(按评分取前 N)', type: 'int', min: 5, max: 500 },
-  { key: 'localProbe.maxUdpCandidates', group: '本机实测', label: 'UDP 候选展示数(需试连)', type: 'int', min: 0, max: 50 },
-  { key: 'probe.ports', group: '连通性探测', label: '探测端口列表', type: 'arrayNumber',
-    hint: '如 [443,1194,5555,992]，按序探测取首个成功' },
-  { key: 'probe.timeoutMs', group: '连通性探测', label: '探测超时(ms)', type: 'int', min: 200, max: 10000, unit: 'ms' },
-  { key: 'probe.probeCount', group: '连通性探测', label: '探测数量(静态评分前 N)', type: 'int', min: 1, max: 100 },
-  { key: 'probe.concurrency', group: '连通性探测', label: '探测并发数', type: 'int', min: 1, max: 50 },
-  { key: 'probe.requireReachable', group: '连通性探测', label: '仅保留可连通节点', type: 'boolean' },
-  { key: 'probe.reachableBoost', group: '连通性探测', label: '可连通评分加成(0~1)', type: 'number', min: 0, max: 1, step: 0.05 },
+  // —— 浏览器连通性实测（唯一探测途径） ——
+  { key: 'localProbe.enabled', group: '浏览器实测', label: '启用页面内浏览器直连实测', type: 'boolean' },
+  { key: 'localProbe.ports', group: '浏览器实测', label: '实测端口列表(仅 TCP)', type: 'arrayNumber',
+    placeholder: '443', hint: '如 [443,1194]，按节点实际端口优先探测' },
+  { key: 'localProbe.timeoutMs', group: '浏览器实测', label: '实测单端口超时(ms)', type: 'int', min: 500, max: 10000, unit: 'ms' },
+  { key: 'localProbe.maxNodes', group: '浏览器实测', label: '实测节点数上限(按评分取前 N)', type: 'int', min: 5, max: 500 },
+  { key: 'localProbe.maxUdpCandidates', group: '浏览器实测', label: 'UDP 候选展示数(需试连)', type: 'int', min: 0, max: 50 },
 
   // —— 优选结果 ——
   { key: 'optimize.topN', group: '优选结果', label: '优选返回条数', type: 'int', min: 1, max: 50 },
-  { key: 'optimize.cacheSeconds', group: '优选结果', label: '优选缓存时长(秒)', type: 'int', min: 0, max: 3600, unit: 's',
-    hint: '相同参数下缓存优选结果，避免重复探测；0 关闭' },
 
   // —— 节点配置生成 ——
   { key: 'ovpn.rewriteRemoteToIp', group: '节点配置生成', label: 'remote 改写为优选 IP', type: 'boolean' },
@@ -319,22 +284,23 @@ export function validateConfig(cfg) {
     config.norm[k] = Math.max(1, numOf(withDefault(`norm.${k}`, DEFAULTS.norm[k]), DEFAULTS.norm[k]));
   }
 
+  // 配置组被外部输入破坏为非对象时回退默认，避免赋值抛错
+  if (!config.localProbe || typeof config.localProbe !== 'object') config.localProbe = structuredClone(DEFAULTS.localProbe);
+  if (!config.optimize || typeof config.optimize !== 'object') config.optimize = structuredClone(DEFAULTS.optimize);
+
   config.localProbe.enabled = boolOf(withDefault('localProbe.enabled', true), true);
   config.localProbe.ports = intArrayOf(withDefault('localProbe.ports', [443])).filter((p) => p >= 1 && p <= 65535);
+  if (config.localProbe.ports.length === 0) config.localProbe.ports = [443];
   config.localProbe.timeoutMs = clamp(intOf(withDefault('localProbe.timeoutMs', 3000), 3000), 500, 10000);
-  config.localProbe.fastFailMs = clamp(intOf(withDefault('localProbe.fastFailMs', 1200), 1200), 200, 5000);
   config.localProbe.maxNodes = clamp(intOf(withDefault('localProbe.maxNodes', 120), 120), 5, 500);
   config.localProbe.maxUdpCandidates = clamp(intOf(withDefault('localProbe.maxUdpCandidates', 8), 8), 0, 50);
-  config.probe.ports = intArrayOf(withDefault('probe.ports', [443, 1194])).filter((p) => p >= 1 && p <= 65535);
-  if (config.probe.ports.length === 0) config.probe.ports = [443];
-  config.probe.timeoutMs = clamp(intOf(withDefault('probe.timeoutMs', 2500), 2500), 200, 10000);
-  config.probe.probeCount = clamp(intOf(withDefault('probe.probeCount', 20), 20), 1, 100);
-  config.probe.concurrency = clamp(intOf(withDefault('probe.concurrency', 10), 10), 1, 50);
-  config.probe.requireReachable = boolOf(withDefault('probe.requireReachable', true), true);
-  config.probe.reachableBoost = clamp(numOf(withDefault('probe.reachableBoost', 0.2), 0.2), 0, 1);
-
   config.optimize.topN = clamp(intOf(withDefault('optimize.topN', 8), 8), 1, 50);
-  config.optimize.cacheSeconds = clamp(intOf(withDefault('optimize.cacheSeconds', 30), 30), 0, 3600);
+
+  // 清理旧版本 KV 配置残留的 CF 边缘探测字段（服务端已不再提供探测能力）
+  delete config.probe;
+  delete config.ovpnProbe;
+  delete config.localProbe.fastFailMs;
+  delete config.optimize.cacheSeconds;
 
   config.ovpn.rewriteRemoteToIp = boolOf(withDefault('ovpn.rewriteRemoteToIp', true), true);
   config.ovpn.appendOptions = strArrayKeep(withDefault('ovpn.appendOptions', []));

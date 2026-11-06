@@ -1,14 +1,16 @@
 # VPNGate 优选工具
 
-> 拉取 VPNGate 全球公共节点 → 按可配置权重评分 → TCP 连通性实测 → 一键优选并生成可用 OpenVPN 节点配置。
+> 拉取 VPNGate 全球公共节点 → 按可配置权重评分 → 浏览器本地实测连通性 → 一键优选并生成可用 OpenVPN 节点配置。
+>
+> 服务端只做数据拉取、解析与纯评分计算，**不提供任何 CF 边缘探测能力**；连通性一律由你的浏览器直连实测，因此不存在「边缘探测节点较慢 / 优选超时」问题。
 
 ## 特性
 
 - **登录保护**：全站需登录访问，访问密码通过 Pages 环境变量 `APP_PASSWORD` 配置（当前为 `admin123`），换密码无需改代码。
 - **实时节点**：从 VPNGate 官方接口 / GitHub 镜像拉取节点列表，数据源可在页面配置、按序回退。
-- **可配置优选**：评分权重、筛选阈值、探测端口、结果条数等全部参数均可在页面修改（存于 Cloudflare KV）。
-- **实测连通**：对静态评分靠前的节点做 TCP 握手探测（Cloudflare 边缘），只推荐真实可达的节点。
-- **本机校验**：CF 边缘可达 ≠ 本机可达（ISP 可能屏蔽该 IP）。提供三种本机校验途径：一键本机探测命令（python3/PowerShell，精确 TCP 结果）、单文件浏览器探测页（本地 http 打开直测）、浏览器直连探测（http 页面自动生效）。结果可粘贴回页面自动标记，支持“仅本机可达”过滤。
+- **可配置优选**：评分权重、筛选阈值、浏览器实测端口、结果条数等全部参数均可在页面修改（存于 Cloudflare KV）。
+- **浏览器本地实测**：点击「⚡ 立即优选」即在**当前页面内**用浏览器直连各节点 TCP 端口（`fetch` no-cors），只推荐你本机网络真实可达的节点；不依赖 Cloudflare 边缘探测，无 30s 墙钟超时。
+- **简洁**：服务端仅保留纯静态评分排序，已移除 TCP 握手探测、OpenVPN 服务探测、单点探测接口以及命令行/下载探测页等冗余路径。
 - **多端原生创建 VPN**：节点详情与优选卡片内置「多端」面板。
   - **🔐 L2TP/IPsec 原生（免客户端）**：VPNGate 节点由 SoftEther 驱动，普遍开放 L2TP/IPsec（PSK=`vpn`、账密 `vpn/vpn`），iOS/Android/Windows/macOS/Linux **系统内置 VPN 直接创建**，无需第三方客户端。Windows 一条命令 `Add-VpnConnection + rasdial` 创建并连接；Linux `network-manager-l2tp + nmcli` 原生创建。
   - OpenVPN 方式：Linux NetworkManager 原生创建；iOS/Android 官方 OpenVPN Connect 一键导入；Windows/macOS 官方客户端一键导入；均附下载、复制链接/命令入口。
@@ -29,10 +31,9 @@ Cloudflare Pages Functions（functions/）
    ├── /api/config       读取/保存配置（KV: VPNGATE_CFG，内存缓存 + 双模式降级）
    ├── /api/config/storage       切换存储模式 / 手动同步内存到 KV
    ├── /api/servers      拉取并解析节点列表（Cache API 缓存，可强制刷新）
-   ├── /api/optimize     评分 + TCP 连通性探测 + 优选排序（结果短时缓存）
+   ├── /api/optimize     纯静态筛选 + 评分排序（可传 ids 只排浏览器实测可达集合）
    ├── /api/ovpn         生成 .ovpn 配置（remote 可改写为优选 IP）
    ├── /api/node         节点参数摘要
-   ├── /api/probe        单点连通性测试
    ├── /api/logs         操作日志
    ├── /api/healthz      无鉴权探活
    └── /api/auth/*       登录/登出/会话
@@ -47,7 +48,7 @@ vpngate/
 ├── public/                 # 前端静态资源（index.html / app.js / style.css）
 ├── functions/              # Pages Functions API
 │   ├── api/[[path]].js     # API 路由入口
-│   └── _lib/               # 核心库：config / sources / probe / optimize / ovpn / util
+│   └── _lib/               # 核心库：config / sources / optimize / ovpn / util
 ├── scripts/
 │   ├── check-syntax.mjs    # 全量语法检查
 │   ├── check-unit.mjs      # 单元测试
@@ -94,15 +95,14 @@ APP_PASSWORD=admin123
 | 筛选 | minUptimeHours / minSpeedMbps / maxPingMs / hostRegex | 在线时长、速度、延迟、主机名白名单 |
 | 评分权重 | score / ping / speed / uptime / freeSessions | 各指标权重（0~10） |
 | 归一化参考 | scoreRef / pingTargetMs / speedTargetBps / uptimeRefHours / sessionsTarget | 各指标归一化基准 |
-| 连通性探测 | ports / timeoutMs / probeCount / concurrency / requireReachable / reachableBoost | 探测参数与加成（整体探测预算 15s，超时节点标记不可达，保证平台 30s 墙钟内返回） |
-| 优选结果 | topN / cacheSeconds | 返回条数 / 优选结果缓存时长（0 关闭；`POST /api/optimize` 支持 body 覆盖 country/topN/requireReachable/probeCount） |
+| 浏览器实测 | enabled / ports / timeoutMs / maxNodes / maxUdpCandidates | 页面内直连实测开关、端口、单端口超时、实测节点上限、UDP 候选展示数 |
+| 优选结果 | topN | 返回条数（`POST /api/optimize` 支持 body 覆盖 country/topN/refresh/ids） |
 | 节点配置 | rewriteRemoteToIp / appendOptions | remote 改写为优选 IP、附加 OpenVPN 选项（默认仅 auth-nocache；勿追加 block-outside-dns——Windows 专用，Linux/macOS 上 OpenVPN 2.5+ 报 Options error；勿追加 data-ciphers——会覆盖原始配置导致 cipher 协商失败） |
 | 界面 | theme / defaultSort | 主题与默认排序 |
 
-> 说明：连通性 RTT 由 Cloudflare 边缘测得，代表“节点可达性”而非用户本机延迟。
-> 推荐配合「本机校验」确认本机网络可达性：优选结果与节点详情中均可一键发起，
-> 使用本机探测命令（python3 / PowerShell）或本地 http 打开探测页完成浏览器直测，
-> 结果粘贴回页面即可自动标记；勾选「仅本机可达」可过滤掉本机不可达的节点。
+> 说明：连通性由**你的浏览器**直连实测，RTT 反映本机网络到节点的延迟，服务端不做任何探测。
+> 判定规则：仅「连接超时」判不可达（TCP 未建立）；端口有响应（含协议断开/证书错误）即视为可达；
+> UDP 端口浏览器无法探测，标注「UDP 未测·试连」。勾选「仅本机可达」可过滤掉实测超时的节点。
 
 ### 配置存储（KV / 内存双模式）
 
@@ -161,23 +161,23 @@ CF_PROJECT=vpngate-test CF_DOMAIN=vpngate-test.zhangsen.kdns.fr \
 | PUT | /api/config/storage | 切换存储模式 { mode: auto/memory/kv } |
 | POST | /api/config/storage/sync | 手动把内存配置同步到 KV |
 | GET | /api/servers?refresh=1 | 节点列表（refresh 强制刷新） |
-| POST | /api/optimize | 执行优选（可覆盖 country/topN/requireReachable，结果短时缓存） |
+| POST | /api/optimize | 纯静态评分排序（可覆盖 country/topN/refresh，或传 `{ ids }` 只排浏览器实测可达集合） |
 | GET | /api/ovpn?id= | 下载 .ovpn |
 | GET | /api/node?id= | 节点参数 |
-| POST | /api/probe | 单点探测 { ip, ports? } |
 | GET | /api/logs?limit=50 | 操作日志 |
 | POST | /api/auth/login \| logout | 登录 / 登出 |
 | GET | /api/auth/me | 会话状态 |
 
 ## 使用示例
 
-1. 打开站点，点击「刷新列表」获取最新节点；
-2. 点击「⚡ 立即优选」查看实测可达的最优节点；
-3. 在优选结果中点「**🔍 本机实测 Top N**」：浏览器**当前页面内**直连全部节点（按评分取前 `localProbe.maxNodes` 名，默认 120）的 TCP 端口，实时标记「本机✓ / 本机✗(超时)」，不另开窗口；
-4. 实测完成后自动对**本机可达集合**按权重重新评分排序；若可达数不足自动回退到 CF 边缘结果并警示（**防 CF 边缘可达但本机全不可达**）；
-5. 对达标节点点击节点 → 「多端一键」选择你的系统（iOS/Android/Windows/macOS/Linux），下载配置或复制一条命令即可连接；也可直接下载 .ovpn。
+1. 打开站点，点击「强制刷新」获取最新节点；
+2. 点击「⚡ 立即优选」：浏览器**当前页面内**直连评分前 `localProbe.maxNodes` 名（默认 120）节点的实际 TCP 端口，实时显示进度与「本机✓ / 本机✗(超时)」；
+3. 实测完成后自动把**本机可达集合**交给服务端按权重重新评分排序并展示；可在结果中点「🔍 重新实测」再测一次；
+4. 若全部超时，展示静态评分结果并提示（可切换 WiFi/流量、增大实测节点上限后重试）；
+5. 对达标节点点「多端」选择系统（iOS/Android/Windows/macOS/Linux）创建连接，或直接「下载配置」。
 
-> 本机实测参数全部可配（配置 → 本机实测）：启用开关 / 端口 / 单端口超时 / 实测节点上限。判定规则：仅「连接超时」判不可达（TCP 未建立）；端口有响应（含 OpenVPN 对非协议请求快速断开、证书错误等）即视为本机可达。
+> 实测参数全部可配（配置 → 浏览器实测）：启用开关 / 端口 / 单端口超时 / 实测节点上限 / UDP 候选数。
+> 若关闭实测，则「立即优选」直接返回静态评分 Top N。
 
 ## 免责声明
 

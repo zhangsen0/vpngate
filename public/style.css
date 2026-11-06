@@ -356,7 +356,7 @@ tbody td { padding: 10px 14px; white-space: nowrap; vertical-align: middle; }
 .opt-meta .rtt { font-size: 15px; font-weight: 700; color: var(--ok); font-variant-numeric: tabular-nums; }
 .opt-meta .rtt.na { color: var(--bad); font-weight: 600; font-size: 12.5px; }
 
-/* 本机校验 */
+/* 提示与状态标签 */
 .lc-hint {
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -369,18 +369,6 @@ tbody td { padding: 10px 14px; white-space: nowrap; vertical-align: middle; }
   line-height: 1.7;
 }
 .lc-hint b { color: var(--warn); }
-.lc-targets { margin-bottom: 14px; display: flex; flex-direction: column; gap: 7px; }
-.lc-row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface-2);
-}
-.lc-row .t-ip { font-family: var(--mono); font-size: 12.5px; flex: 1; min-width: 0; }
-.lc-row .t-host { color: var(--text-faint); font-size: 11px; margin-left: 4px; }
-.lc-row .t-ports { color: var(--text-faint); font-size: 11px; margin-left: 6px; }
-.lc-actions { display: flex; gap: 6px; align-items: center; flex: none; }
 .chip {
   display: inline-flex; align-items: center; gap: 3px;
   padding: 2px 9px; border-radius: 999px;
@@ -391,17 +379,6 @@ tbody td { padding: 10px 14px; white-space: nowrap; vertical-align: middle; }
 .chip.bad { background: color-mix(in srgb, var(--bad) 13%, transparent); color: var(--bad); }
 .chip.warn { background: color-mix(in srgb, var(--warn) 13%, transparent); color: var(--warn); }
 .chip.dim { background: var(--surface-3); color: var(--text-dim); }
-.lc-paste textarea {
-  width: 100%; min-height: 86px;
-  padding: 9px 11px;
-  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
-  background: var(--surface-2); color: var(--text);
-  font-family: var(--mono);
-  font-size: 12px; resize: vertical; outline: none;
-  transition: border-color 0.15s;
-}
-.lc-paste textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,0.14); }
-.lc-paste .row-actions { margin-top: 8px; }
 
 /* 多端一键使用 */
 .pf-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }

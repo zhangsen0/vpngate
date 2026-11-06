@@ -3,7 +3,7 @@
  *
  * 覆盖：
  *  A. 认证与访问控制（未登录跳转/401、错误密码、登录、会话、登出）
- *  B. 全接口测试（health/config/servers/optimize/ovpn/node/probe/auth）
+ *  B. 全接口测试（health/config/servers/optimize/ovpn/node/auth）
  *  C. 用户使用级流程（登录 → 首页资源加载 → 配置读取 → 列表 → 优选 → 节点/配置产出）
  *
  * 用法：node scripts/e2e-test.mjs <baseUrl> <password>
@@ -59,8 +59,9 @@ ok('未登录访问首页 → 302 跳转登录页', r.status === 302 && (r.locat
 r = await req('/index.html');
 ok('未登录访问 index.html → 302', r.status === 302);
 
-r = await req('/style.css');
-ok('未登录访问静态资源 → 302', r.status === 302);
+// 静态资源带 cache-busting 参数：避免命中边缘缓存（缓存命中会绕过中间件鉴权）
+r = await req(`/style.css?e2e=${Date.now()}`);
+ok('未登录访问静态资源 → 302', r.status === 302, `status=${r.status}`);
 
 r = await req('/api/health');
 ok('未登录访问 API → 401', r.status === 401 && r.json && r.json.ok === false);
@@ -142,27 +143,35 @@ ok('数据源状态返回', Array.isArray(r.json.statuses) && r.json.statuses.le
 r = await req('/api/servers?refresh=1');
 ok('GET /api/servers?refresh=1 强制刷新 → 200', r.status === 200 && r.json && r.json.ok && (r.json.servers || []).length > 0);
 
+// 节点动态上下线：强制刷新后重新取当前列表首个节点，避免用已下线的 id 测 node/ovpn 链路
+r = await req('/api/servers');
+const liveFirst = (r.json && r.json.servers || [])[0] || first;
+
 r = await req('/api/optimize', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
 });
 const ranked = r.json && r.json.ranked || [];
-const probed = r.json && r.json.probed || [];
 ok('POST /api/optimize → 优选结果', r.status === 200 && r.json && r.json.ok);
 ok('优选返回 topN 达标节点（按配置 8）', Array.isArray(ranked) && ranked.length > 0 && ranked.length <= 8, `ranked=${ranked.length}`);
-ok('候选探测信息完整（id/ip/reachable）', Array.isArray(probed) && probed.length > 0 && 'reachable' in (probed[0] || {}));
-const best = ranked[0] || {};
-ok('优选节点含基础分与最终分', best.baseScore !== undefined && best.score !== undefined);
+ok('优选节点字段完整（id/ip/baseScore/score）', !!ranked[0] && !!ranked[0].id && !!ranked[0].ip && ranked[0].baseScore !== undefined && ranked[0].score !== undefined);
+ok('服务端不做连通性标记（探测只在浏览器）', ranked.every((x) => x.reachable === undefined));
 
 r = await req('/api/optimize', {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ topN: 3, country: servers[0].countryShort, requireReachable: false }),
+  body: JSON.stringify({ topN: 3, country: liveFirst.countryShort }),
 });
 ok('POST /api/optimize 覆盖参数（topN=3 + 国家筛选）', r.status === 200 && (r.json.ranked || []).length <= 3);
-ok('国家筛选生效', (r.json.ranked || []).every((x) => x.countryShort === servers[0].countryShort));
+ok('国家筛选生效', (r.json.ranked || []).every((x) => x.countryShort === liveFirst.countryShort));
 
-const nodeId = first.id;
+r = await req('/api/optimize', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ ids: [liveFirst.id] }),
+});
+ok('POST /api/optimize ids 模式（浏览器实测可达集合）→ 只返回该节点', r.status === 200 && (r.json.ranked || []).length <= 1 && (r.json.ranked || []).every((x) => x.id === liveFirst.id));
+
+const nodeId = liveFirst.id;
 r = await req(`/api/node?id=${encodeURIComponent(nodeId)}`);
-ok('GET /api/node → 节点参数（ip/port/账密）', r.status === 200 && r.json && r.json.ok && r.json.node.ip === first.ip && r.json.node.authUser === 'vpn');
+ok('GET /api/node → 节点参数（ip/port/账密）', r.status === 200 && r.json && r.json.ok && r.json.node.ip === liveFirst.ip && r.json.node.authUser === 'vpn');
 
 r = await req(`/api/ovpn?id=${encodeURIComponent(nodeId)}`);
 ok('GET /api/ovpn → 生成 .ovpn（含 remote 与 client）', r.status === 200 && r.text.includes('client') && r.text.includes('remote'), `len=${r.text.length}`);
@@ -183,14 +192,15 @@ ok('GET /api/ovpn 未知 id → 404', r.status === 404);
 
 r = await req('/api/probe', {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ ip: first.ip, ports: [443] }),
+  body: JSON.stringify({ ip: liveFirst.ip }),
 });
-ok('POST /api/probe → 探测结果结构正确', r.status === 200 && r.json && r.json.ok && typeof r.json.reachable === 'boolean');
+ok('POST /api/probe → 404（CF 边缘探测接口已移除）', r.status === 404);
 
-r = await req('/api/probe', {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+r = await req('/api/probe-ovpn', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ ids: [liveFirst.id] }),
 });
-ok('POST /api/probe 缺 ip → 400', r.status === 400);
+ok('POST /api/probe-ovpn → 404（CF 边缘探测接口已移除）', r.status === 404);
 
 r = await req('/api/not-exist');
 ok('未知路由 → 404', r.status === 404);

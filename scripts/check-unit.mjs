@@ -1,7 +1,7 @@
 /**
  * check-unit.mjs — 单元测试
  *
- * 覆盖：配置校验/合并、CSV/JSON 解析、归一化、筛选、评分、优选（注入桩探测）、
+ * 覆盖：配置校验/合并、CSV/JSON 解析、归一化、筛选、评分、纯静态优选排序、
  *       OpenVPN 配置生成。运行：node scripts/check-unit.mjs
  */
 
@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 import { validateConfig, mergeConfig, DEFAULTS, loadConfig, saveConfig, setStorageMode, syncToKv } from '../functions/_lib/config.js';
 import { parseCsv, parseJson, normalizeServers } from '../functions/_lib/sources.js';
-import { applyFilters, scoreServer, runOptimize } from '../functions/_lib/optimize.js';
+import { applyFilters, scoreServer, rankServers } from '../functions/_lib/optimize.js';
 import { decodeConfig, buildOvpn, nodeParams } from '../functions/_lib/ovpn.js';
 import { checkLoginLock, recordLoginFail, clearLoginLock, signFileToken, verifyFileToken } from '../functions/_lib/auth.js';
 import { rememberServer, findServerSnapshot } from '../functions/_lib/snapshot.js';
@@ -51,7 +51,7 @@ test('validateConfig：越界值收敛、非法类型回退默认', () => {
   const { config, errors } = validateConfig({
     fetch: { timeoutMs: 999999, cacheSeconds: 1, maxServers: -5 },
     filters: { maxPingMs: 50000, hostRegex: '([' },
-    probe: { ports: [443, 99999, 'abc'], concurrency: 999 },
+    localProbe: { ports: [443, 99999, 'abc'], timeoutMs: 999999, maxNodes: 999999 },
     weights: { score: 999, ping: -1 },
     optimize: { cacheSeconds: 99999 },
   });
@@ -61,11 +61,13 @@ test('validateConfig：越界值收敛、非法类型回退默认', () => {
   assert.equal(config.filters.maxPingMs, 5000);
   assert.equal(config.filters.hostRegex, '', '非法正则应重置');
   assert.ok(errors.some((e) => e.includes('hostRegex')), '应记录 hostRegex 错误');
-  assert.deepEqual(config.probe.ports, [443], '非法端口应被过滤');
-  assert.equal(config.probe.concurrency, 50);
+  assert.deepEqual(config.localProbe.ports, [443], '非法端口应被过滤');
+  assert.equal(config.localProbe.timeoutMs, 10000, '实测超时应收敛到上限');
+  assert.equal(config.localProbe.maxNodes, 500, '实测节点数应收敛到上限');
   assert.equal(config.weights.score, 10);
   assert.equal(config.weights.ping, 0);
-  assert.equal(config.optimize.cacheSeconds, 3600, '优选缓存应收敛到上限');
+  assert.equal(config.probe, undefined, '旧 CF 边缘探测配置应被清理');
+  assert.equal(config.optimize.cacheSeconds, undefined, '旧优选缓存配置应被清理');
 });
 
 test('validateConfig：数据源为空时恢复默认', () => {
@@ -159,56 +161,36 @@ test('scoreServer：权重与归一化方向正确', () => {
   assert.ok(a > 0.5 && a <= 1);
 });
 
-test('runOptimize：静态评分 → 探测 → 可连通加成/过滤 → topN（注入桩探测）', async () => {
-  const cfg = mergeConfig({
-    probe: { probeCount: 10, concurrency: 5, requireReachable: true, reachableBoost: 0.2, ports: [443] },
-    optimize: { topN: 2 },
-    filters: { minSpeedMbps: 0 },
-  });
-  const servers = sampleServers();
-  // 桩：只有 1.1.1.1 可连通，RTT 40ms
-  const stub = async (s) => s.ip === '1.1.1.1'
-    ? { reachable: true, rttMs: 40, port: 443 }
-    : { reachable: false, rttMs: null, port: null };
-
-  const { ranked, probed } = await runOptimize(servers, cfg, stub);
+test('rankServers：筛选 + 静态评分降序 + topN 截断（无任何探测）', () => {
+  const cfg = mergeConfig({ optimize: { topN: 2 }, filters: { minSpeedMbps: 0 } });
+  const { ranked } = rankServers(sampleServers(), cfg);
   assert.ok(ranked.length > 0 && ranked.length <= 2);
-  assert.ok(ranked.every((r) => r.reachable), 'requireReachable 时结果必须全部可连通');
-  assert.ok(ranked.every((r) => r.ip === '1.1.1.1'));
-  assert.equal(probed.length, servers.length, '候选应全部被探测');
-  const r0 = ranked[0];
-  assert.equal(r0.score, r0.baseScore * 1.2, '可连通加成生效');
+  const sorted = [...ranked].sort((a, b) => b.score - a.score);
+  assert.deepEqual(ranked.map((r) => r.id), sorted.map((r) => r.id), '按评分降序');
+  assert.ok(ranked.every((r) => r.score === r.baseScore), '无探测加成，最终分等于基础分');
+  assert.ok(ranked.every((r) => r.reachable === undefined), '服务端不做连通性标记');
 });
 
-test('runOptimize：requireReachable=false 时保留不可连通节点且无加成', async () => {
-  const cfg = mergeConfig({ probe: { requireReachable: false, probeCount: 10 } });
-  const stub = async () => ({ reachable: false, rttMs: null, port: null });
-  const { ranked } = await runOptimize(sampleServers(), cfg, stub);
-  assert.ok(ranked.length > 0, '不要求可连通时仍应有结果');
-  assert.ok(ranked.every((r) => r.score === r.baseScore));
-});
-
-test('runOptimize：ids 本机实测模式——仅对给定 id 集合按静态权重评分排序，跳过探测', async () => {
-  const cfg = mergeConfig({ probe: { probeCount: 10, requireReachable: true }, optimize: { topN: 2 } });
-  const servers = sampleServers();
-  // 传入的 id 集合 = 本机浏览器实测可达的节点
+test('rankServers：ids 模式只排浏览器实测可达集合', () => {
+  const cfg = mergeConfig({ optimize: { topN: 2 } });
   const ids = ['public-vpn-1|1.1.1.1', 'public-vpn-3|3.3.3.3'];
-  const stub = async () => { throw new Error('本机实测模式不应调用边缘探测'); };
-  const { ranked, probed } = await runOptimize(servers, cfg, stub, 5000, { ids });
-  assert.ok(ranked.length > 0 && ranked.length <= 2, 'ids 模式应只返回 id 集合内节点');
+  const { ranked } = rankServers(sampleServers(), cfg, ids);
+  assert.ok(ranked.length > 0 && ranked.length <= 2);
   assert.ok(ranked.every((r) => ids.includes(r.id)), '结果必须全部来自传入 ids');
-  assert.ok(probed.every((p) => ids.includes(p.id)), '候选也必须来自传入 ids');
-  assert.ok(ranked.every((r) => r.score === r.baseScore), 'ids 模式无探测加成');
-  // 排序按静态评分降序
   const sorted = [...ranked].sort((a, b) => b.score - a.score);
   assert.deepEqual(ranked.map((r) => r.id), sorted.map((r) => r.id), '按评分降序');
 });
 
-test('runOptimize：ids 集合为空时返回空结果（供前端回退边缘结果）', async () => {
-  const cfg = mergeConfig({ probe: { probeCount: 10 }, optimize: { topN: 2 } });
-  const stub = async () => ({ reachable: true, rttMs: 10, port: 443 });
-  const { ranked } = await runOptimize(sampleServers(), cfg, stub, 5000, { ids: ['not-exist'] });
-  assert.equal(ranked.length, 0, 'ids 与任何节点不匹配时应为空');
+test('rankServers：ids 与任何节点不匹配时返回空结果', () => {
+  const cfg = mergeConfig({ optimize: { topN: 2 } });
+  const { ranked } = rankServers(sampleServers(), cfg, ['not-exist']);
+  assert.equal(ranked.length, 0);
+});
+
+test('rankServers：筛选条件生效（禁用国家）', () => {
+  const cfg = mergeConfig({ filters: { disabledCountryCodes: ['RU'] } });
+  const { ranked } = rankServers(sampleServers(), cfg);
+  assert.ok(ranked.every((r) => r.countryShort !== 'RU'));
 });
 
 // ==================== OpenVPN 配置生成 ====================

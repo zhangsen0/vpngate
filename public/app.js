@@ -2,8 +2,8 @@
  * app.js — 前端交互逻辑（无框架，纯静态）
  *
  * 职责：加载配置与服务器列表、表格渲染与排序筛选、节点详情抽屉、
- *       优选结果面板、配置面板（按服务端 SCHEMA 通用渲染）。
- * 约定：所有业务参数均来自 /api/config，前端不做硬编码决策。
+ *       优选结果面板（浏览器本地实测）、配置面板（按服务端 SCHEMA 通用渲染）。
+ * 约定：所有业务参数均来自 /api/config；连通性探测只在浏览器内完成，服务端不探测。
  */
 
 'use strict';
@@ -19,9 +19,8 @@ const state = {
   search: '',
   country: '',
   sort: 'score-desc',
-  reachableOnly: false,  // 前端仅按探测结果过滤展示（探测结果存于行数据）
-  lcOnly: false,         // 仅展示本机校验可达的节点
-  local: { results: {}, targets: [] }, // 本机校验结果与当前目标
+  lcOnly: false,         // 仅展示浏览器实测可达的节点
+  local: { results: {} }, // 浏览器实测结果：id → { reachable, rttMs, port, udp }
   storage: 'memory',
 };
 
@@ -140,7 +139,7 @@ function setStatus(text, cls) {
 
 // ==================== 表格渲染 ====================
 
-/** 当前可见列表（搜索 + 国家 + 排序 + 可连通过滤） */
+/** 当前可见列表（搜索 + 国家 + 排序 + 本机可达过滤） */
 function visibleServers() {
   let list = state.servers.slice();
   const kw = state.search.trim().toLowerCase();
@@ -151,7 +150,6 @@ function visibleServers() {
       String(s.operator || '').toLowerCase().includes(kw));
   }
   if (state.country) list = list.filter((s) => s.countryShort === state.country);
-  if (state.reachableOnly) list = list.filter((s) => s._reachable === true);
   if (state.lcOnly) list = list.filter((s) => state.local.results[s.id] && state.local.results[s.id].reachable);
   // 排序
   const cmp = {
@@ -186,18 +184,14 @@ function renderTable() {
   const list = visibleServers();
   document.getElementById('emptyText').hidden = list.length > 0;
   tbody.innerHTML = list.map((s, i) => {
-    const reachable = s._reachable;
-    const badge = reachable === undefined
-      ? ''
-      : reachable
-        ? `<span class="badge ok">可连通 ${s._rtt}ms</span>`
-        : `<span class="badge bad">不可连通</span>`;
     const lc = state.local.results[s.id];
     const lcChip = !lc
       ? '<span class="chip dim">未测</span>'
-      : lc.reachable
-        ? `<span class="chip ok">本机✓ ${lc.rttMs}ms</span>`
-        : `<span class="chip bad">本机✗</span>`;
+      : lc.udp
+        ? '<span class="chip warn">UDP 未测</span>'
+        : lc.reachable
+          ? `<span class="chip ok">本机✓ ${lc.rttMs}ms</span>`
+          : `<span class="chip bad">本机✗</span>`;
     return `
       <tr data-id="${esc(s.id)}">
         <td class="num">${i + 1}</td>
@@ -212,14 +206,13 @@ function renderTable() {
         <td class="num">${fmtUptime(s.uptimeHours)}</td>
         <td class="num">${s.sessions || '-'}</td>
         <td>${lcChip}</td>
-        <td>${badge}</td>
       </tr>`;
   }).join('');
 }
 
 function renderFoot() {
   document.getElementById('footText').textContent =
-    `v${state.version || '1'} · CF 探测延迟为边缘测量值 · 本机校验确认本机网络可达性 · 共 ${state.servers.length} 个节点`;
+    `v${state.version || '1'} · 连通性仅由你的浏览器本地实测 · 共 ${state.servers.length} 个节点`;
 }
 
 function fillCountrySelect() {
@@ -253,10 +246,12 @@ function openDrawer(id) {
   if (!s) return toast('未找到该节点', 'err');
   const lc = state.local.results[s.id];
   const lcLine = !lc
-    ? '<div class="section-title">本机校验：<span class="chip dim">未测</span>（推荐对本机网络做可达性确认）</div>'
-    : lc.reachable
-      ? `<div class="section-title">本机校验：<span class="chip ok">可达 ${lc.rttMs}ms</span>（${esc(lc.detail || '')}）</div>`
-      : `<div class="section-title">本机校验：<span class="chip bad">不可达</span>（${esc(lc.detail || '')}）</div>`;
+    ? '<div class="section-title">浏览器实测：<span class="chip dim">未测</span>（可用下方「本机探测」或「立即优选」实测）</div>'
+    : lc.udp
+      ? '<div class="section-title">浏览器实测：<span class="chip warn">UDP 无法探测，需试连</span></div>'
+      : lc.reachable
+        ? `<div class="section-title">浏览器实测：<span class="chip ok">可达 ${lc.rttMs}ms · 端口 ${lc.port || '-'}</span></div>`
+        : '<div class="section-title">浏览器实测：<span class="chip bad">不可达（连接超时）</span></div>';
   const l2tpParams = `服务器 ${s.ip}\n类型 L2TP/IPsec (PSK)\nPSK vpn\n用户名 vpn\n密码 vpn`;
   const l2tpLine = `
     <div class="section-title">L2TP/IPsec 原生参数（系统内置 VPN，免客户端）</div>
@@ -281,10 +276,9 @@ function openDrawer(id) {
     </dl>
     ${lcLine}
     ${l2tpLine}
-    <div class="section-title">OpenVPN 连通性测试（端口 ${(state.config.probe.ports || [443]).join('/')}）</div>
+    <div class="section-title">浏览器本地探测（端口 ${(state.config.localProbe.ports || [443]).join('/')}）</div>
     <div class="row-actions">
-      <button class="btn" data-act="probe" data-id="${esc(s.id)}">CF 探测</button>
-      <button class="btn" data-act="lc" data-id="${esc(s.id)}">本机校验</button>
+      <button class="btn" data-act="probe" data-id="${esc(s.id)}">本机探测</button>
       <button class="btn btn-primary" data-act="ovpn" data-id="${esc(s.id)}">下载 .ovpn</button>
       <button class="btn" data-act="pf" data-id="${esc(s.id)}">多端一键</button>
       <button class="btn" data-act="node" data-id="${esc(s.id)}">节点参数</button>
@@ -294,26 +288,20 @@ function openDrawer(id) {
   document.getElementById('drawer').hidden = false;
 }
 
+/** 单节点浏览器本地探测（抽屉内「本机探测」按钮） */
 async function probeServerById(id) {
   const s = state.servers.find((x) => x.id === id);
   if (!s) return;
   const box = document.getElementById('probeResult');
-  box.innerHTML = '<div class="section-title">正在探测…</div>';
-  try {
-    const data = await api('/api/probe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ip: s.ip }),
-    });
-    s._reachable = data.reachable;
-    s._rtt = data.reachable ? data.rttMs : null;
-    box.innerHTML = `<div class="section-title">${data.reachable
-      ? `<span class="badge ok">可连通 · 端口 ${data.port} · RTT ${data.rttMs}ms</span>`
-      : `<span class="badge bad">不可连通（已测端口 ${(data.ports || []).join('/')}）</span>`}</div>`;
-    renderTable();
-  } catch (e) {
-    box.innerHTML = `<div class="section-title"><span class="badge bad">探测失败：${esc(e.message)}</span></div>`;
-  }
+  box.innerHTML = '<div class="section-title">正在用浏览器直连探测…</div>';
+  const lp = state.config.localProbe || {};
+  const ports = (lp.ports || [443]).slice(0, 2);
+  const r = await probeLocalIp(s.ip, ports, lp.timeoutMs || 3000);
+  state.local.results[s.id] = { reachable: r.reachable, rttMs: r.rttMs, port: r.port || ports[0] };
+  box.innerHTML = r.reachable
+    ? `<div class="section-title"><span class="badge ok">本机可达 · 端口 ${r.port} · ${r.rttMs}ms</span></div>`
+    : '<div class="section-title"><span class="badge bad">本机不可达（连接超时）</span></div>';
+  renderTable();
 }
 
 async function downloadOvpn(id) {
@@ -374,123 +362,168 @@ async function showNodeParams(id) {
 }
 
 // ==================== 优选面板 ====================
-
+/**
+ * 「立即优选」一站式流程（唯一探测途径 = 浏览器页面内直连，未经 Cloudflare 边缘）：
+ *  1. 从已加载的全量节点按评分取前 localProbe.maxNodes 个；
+ *  2. 浏览器 fetch(no-cors) 直连各节点实际 TCP 端口，筛出本机可达集合；
+ *  3. POST /api/optimize { ids } 由服务端按配置权重重新评分排序后渲染；
+ *  4. 未启用实测或 0 可达时回退展示静态评分结果并提示。
+ * 服务端只做纯计算，因此不存在探测超时问题。
+ */
 async function runOptimize() {
-  const mask = document.getElementById('optMask');
-  mask.hidden = false;
-  document.getElementById('optBody').innerHTML =
-    '<div class="empty">正在按配置评分并探测（静态评分前 ' + (state.config.probe.probeCount || 20) + ' 名）…</div>';
-  // 探测受 Cloudflare 边缘 30s 墙钟限制，前端 25s 兜底超时并给出可操作提示
-  const ctrl = new AbortController();
-  const failTimer = setTimeout(() => ctrl.abort(), 25000);
-  try {
-    const data = await api('/api/optimize', {
+  const body = document.getElementById('optBody');
+  document.getElementById('optMask').hidden = false;
+  const lp = state.config.localProbe || {};
+
+  /** 请求服务端按配置筛选/评分/排序；ids 非空时只排浏览器实测可达集合 */
+  const rank = async (ids) => {
+    const d = await api('/api/optimize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-      signal: ctrl.signal,
+      body: JSON.stringify(ids ? { ids } : {}),
     });
-    const ranked = data.ranked || [];
-    if (ranked.length === 0) {
-      document.getElementById('optBody').innerHTML =
-        '<div class="empty">没有可用的优选结果：可尝试放宽筛选（如「仅保留可连通」开关）或刷新数据源。</div>';
+    return d.ranked || [];
+  };
+
+  if (lp.enabled === false) {
+    body.innerHTML = '<div class="empty">正在按配置评分…</div>';
+    try {
+      renderOptCards(await rank(null), { mode: 'static' });
+    } catch (e) {
+      body.innerHTML = `<div class="empty">优选失败：${esc(e.message)}</div>`;
+    }
+    return;
+  }
+
+  const maxNodes = Math.max(5, Math.min(500, lp.maxNodes || 120));
+  const pool = [...state.servers]
+    .filter((s) => s.ip)
+    .sort((a, b) => (b.score || 0) - (a.score || 0) || (a.pingMs || 1e9) - (b.pingMs || 1e9))
+    .slice(0, maxNodes);
+  if (!pool.length) {
+    body.innerHTML = '<div class="empty">暂无节点，请先点击「强制刷新」拉取数据源。</div>';
+    return;
+  }
+
+  const ports = (lp.ports || [443]).slice(0, 2);
+  const timeoutMs = lp.timeoutMs || 3000;
+  body.innerHTML = `
+    <div class="section-title">🔍 浏览器本地实测中（共 ${pool.length} 个节点，按实际端口直连）…</div>
+    <div class="probe-bar"><div class="probe-bar-inner" id="probeBarInner" style="width:0%"></div></div>
+    <div class="empty" id="probeStatus">已测 0 / ${pool.length}，本机可达 0…</div>`;
+  const barInner = document.getElementById('probeBarInner');
+  const statusEl = document.getElementById('probeStatus');
+
+  // 浏览器对跨源 fetch 有并发限制，用 8 个 worker 循环处理
+  let idx = 0, done = 0, okCount = 0, udpCount = 0;
+  const tick = () => {
+    barInner.style.width = Math.round((done / pool.length) * 100) + '%';
+    statusEl.textContent = `已测 ${done} / ${pool.length}，本机可达 ${okCount}，UDP 未测 ${udpCount}，超时 ${done - okCount - udpCount}…`;
+  };
+  const CONC = 8;
+  await Promise.all(Array.from({ length: Math.min(CONC, pool.length) }, async () => {
+    while (idx < pool.length) {
+      const s = pool[idx++];
+      const r = await probeLocalServer(s, ports, timeoutMs);
+      state.local.results[s.id] = r;
+      done++;
+      if (r.reachable) okCount++;
+      else if (r.udp) udpCount++;
+      if (done % 5 === 0 || done === pool.length) tick();
+    }
+  }));
+  tick();
+  renderTable();
+
+  const reachableIds = [];
+  const udpCandidates = [];
+  pool.forEach((s) => {
+    const r = state.local.results[s.id];
+    if (r.reachable) reachableIds.push(s.id);
+    else if (r.udp) udpCandidates.push(s);
+  });
+
+  try {
+    if (!reachableIds.length) {
+      renderOptCards(await rank(null), { mode: 'static' });
+      body.insertAdjacentHTML('afterbegin', `<div class="empty" style="color:var(--err,#e5484d);margin-bottom:8px">
+        ⚠️ 浏览器实测 ${pool.length} 个节点 TCP 全部超时（另有 ${udpCount} 个 UDP 节点无法探测），已展示静态评分结果；
+        这些节点本机可能连不上。可切换网络（WiFi↔流量）、增大实测节点上限或稍后再试。</div>`);
       return;
     }
-    // 渲染（本机实测结果可为空）；renderOptCards 内部已绑定按钮事件
-    renderOptCards(ranked, data, null);
-    const lcAllBtn = document.querySelector('[data-act="opt-lc-all"]');
-    if (lcAllBtn) {
-      lcAllBtn.addEventListener('click', () => {
-        openLcModal(ranked.map((r) => ({
-          id: r.id,
-          ip: r.ip,
-          hostname: r.hostname,
-          countryShort: r.countryShort,
-          ports: (state.config.probe.ports || [443]).slice(0, 3),
+    const list = await rank(reachableIds);
+    const maxUdp = Math.max(0, Math.min(50, lp.maxUdpCandidates || 8));
+    if (maxUdp > 0 && udpCandidates.length) {
+      // UDP 端口浏览器无法探测，附带展示评分前 N 个候选供试连
+      list.push(...udpCandidates
+        .sort((a, b) => (b.score || 0) - (a.score || 0))
+        .slice(0, maxUdp)
+        .map((s) => ({
+          id: s.id, hostname: s.hostname, ip: s.ip, countryShort: s.countryShort,
+          port: s.port, proto: s.proto, baseScore: 0, score: 0, udp: true,
         })));
-      });
     }
+    renderOptCards(list, { mode: 'local' });
+    body.insertAdjacentHTML('afterbegin', `<div class="section-title" style="color:var(--ok,#30a46c)">
+      ✅ 浏览器实测 ${pool.length} 个节点：TCP 可达 ${reachableIds.length} 个，已按权重重新评分
+      ${maxUdp > 0 && udpCandidates.length ? `；另附 ${Math.min(maxUdp, udpCandidates.length)} 个 UDP 候选（标「UDP 未测·试连」）` : ''}。</div>`);
   } catch (e) {
-    const timedOut = e.name === 'AbortError' || (e.message || '').includes('abort');
-    document.getElementById('optBody').innerHTML = timedOut
-      ? '<div class="empty">优选超时：边缘探测节点较慢。可在「配置 → 连通性探测」减小探测数量/超时后重试，或稍后再试。</div>'
-      : `<div class="empty">优选失败：${esc(e.message)}</div>`;
-  } finally {
-    clearTimeout(failTimer);
+    body.innerHTML = `<div class="empty">优选失败：${esc(e.message)}</div>`;
   }
 }
 
-/** 渲染优选结果卡片。results: Map<id, {reachable,rttMs,why}> 或 null（未做本机实测） */
-function renderOptCards(ranked, data, results) {
-  const lp = state.config.localProbe || {};
-  const maxNodes = lp.maxNodes || 120;
-  const lcChipOf = (id) => {
-    const r = results && results.get(id);
-    if (!r) {
-      const lc = state.local.results[id];
-      return !lc ? '<span class="chip dim">本机未测</span>'
-        : lc.reachable ? `<span class="chip ok">本机✓ ${lc.rttMs}ms</span>` : '<span class="chip bad">本机✗</span>';
-    }
-    if (r.udp) return `<span class="chip warn" title="UDP 端口浏览器无法探测，需试连">UDP 未测·试连</span>`;
-    if (!r.reachable) return `<span class="chip bad">本机✗ 超时</span>`;
-    // 叠加 CF 边缘 OpenVPN 服务探测结果（确认 443 上 OpenVPN 服务真实在线）
-    let svc = '';
-    if (r.service === true) svc = `<span class="chip ok" title="CF 边缘已发 OpenVPN 握手帧，服务确认在线">服务✓</span>`;
-    else if (r.service === false) svc = `<span class="chip bad" title="CF 边缘探测：该节点 443 未响应 OpenVPN 握手（连不上主因）">服务✗</span>`;
-    return `<span class="chip ok">本机✓ ${r.rttMs}ms</span>${svc}`;
+/** 渲染优选结果卡片（可达性标记统一取自 state.local.results 的浏览器实测结果） */
+function renderOptCards(ranked, data) {
+  const chipOf = (id) => {
+    const r = state.local.results[id];
+    if (!r) return '<span class="chip dim">本机未测</span>';
+    if (r.udp) return '<span class="chip warn" title="UDP 端口浏览器无法探测，需试连">UDP 未测·试连</span>';
+    return r.reachable
+      ? `<span class="chip ok">本机✓ ${r.rttMs}ms</span>`
+      : '<span class="chip bad">本机✗ 超时</span>';
   };
-  // 实测 RTT/端口优先取本机实测结果（ids 模式服务端不返回实测 RTT，避免“毫秒缺失”）
-  const lrOf = (id) => results && results.get(id);
   const body = document.getElementById('optBody');
   body.innerHTML = `
-    <div class="section-title">${data.mode === 'local' ? '本机实测可达节点（按权重评分排序）' : `CF 边缘探测 ${(data.probed || []).length} 个候选，${ranked.length} 个达标节点（按最终评分排序）`}</div>
+    <div class="section-title">${data.mode === 'local'
+      ? `浏览器实测可达节点（共 ${ranked.length} 个，按权重评分排序）`
+      : `静态评分前 ${ranked.length} 个节点（未启用实测或本机无可达节点时展示）`}</div>
     <div class="row-actions" style="margin-bottom:10px">
-      <button class="btn btn-primary" data-act="opt-probe">🔍 本机实测 Top ${maxNodes}（页面内直连）</button>
-      <button class="btn" data-act="opt-lc-all">本机校验全部 ${ranked.length} 个</button>
+      <button class="btn btn-primary" data-act="opt-probe">🔍 重新实测</button>
     </div>
     ${ranked.map((r, i) => {
-      const lr = lrOf(r.id);
-      const rttShow = lr && lr.rttMs != null ? `${lr.rttMs}ms` : (r.reachable ? ((r.rttMs || '') + 'ms') : '不可达');
-      const portShow = (lr && lr.port) || r.port || r.ports || '-';
+      const lr = state.local.results[r.id];
+      const rttShow = lr && lr.rttMs != null ? `${lr.rttMs}ms` : (lr && lr.udp ? '需试连' : '-');
+      const portShow = (lr && lr.port) || r.port || '-';
       return `
       <div class="opt-card">
         <div class="opt-rank">${i + 1}</div>
         <div class="opt-main">
           <div class="row1"><span class="flag">${flagEmoji(r.countryShort)}</span><span class="ip">${esc(r.ip)}</span>
-            <span class="badge ok">${esc(r.hostname)}</span>${lcChipOf(r.id)}</div>
+            <span class="badge ok">${esc(r.hostname)}</span>${chipOf(r.id)}</div>
           <div class="row2">端口 ${portShow} · ${(r.proto || '').toUpperCase() || '-'} · 在线 ${fmtUptime(r.uptimeHours)} · 基础分 ${(r.baseScore || 0).toFixed(3)} → ${(r.score || 0).toFixed(3)}</div>
         </div>
         <div class="opt-meta">
           <div class="rtt">${rttShow}</div>
           <div style="margin-top:4px;display:flex;gap:6px;justify-content:flex-end">
-            <button class="btn btn-sm" data-act="opt-lc" data-id="${esc(r.id)}">本机校验</button>
             <button class="btn btn-sm" data-act="opt-pf" data-id="${esc(r.id)}">多端</button>
             <button class="btn btn-sm" data-act="opt-ovpn" data-id="${esc(r.id)}">下载配置</button>
           </div>
         </div>
       </div>`;
     }).join('')}
-    <div class="section-title">「本机实测」用你的浏览器直连各节点实际 TCP 端口（不另开窗口）：
-      仅「连接超时」判为本机不可达（TCP 未建立）；
-      端口有响应（含协议断开/证书错误）即视为本机可达；
-      UDP 端口浏览器无法探测，标注「UDP 未测·试连」——优先选本机✓ 的 TCP 节点。
-      ⚠️ <b>本机✓ 仅代表网络层可达（TCP 能建立）</b>，不代表 443 上 OpenVPN 服务一定可用：
-      运营商可能干扰 OpenVPN 特征、或个别节点未启用 OpenVPN 服务。连接失败时：① 换节点重试；
-      ② 改试「🔐 L2TP 原生」（SoftEther 默认开启 L2TP/IPsec，走 UDP/ESP，国内网络普遍可连）。</div>`;
+    <div class="section-title">「重新实测」用你的浏览器直连各节点实际 TCP 端口（不另开窗口）：
+      仅连接超时判为不可达（TCP 未建立），端口有响应（含协议断开/证书错误）即视为可达；
+      UDP 端口浏览器无法探测，标注「UDP 未测·试连」。
+      ⚠️ <b>本机✓ 仅代表网络层可达</b>，不代表 OpenVPN 服务一定可用：连不上时换节点重试，
+      或改试「🔐 L2TP 原生」（SoftEther 默认开启 L2TP/IPsec，国内网络普遍可连）。</div>`;
   document.querySelectorAll('[data-act="opt-ovpn"]').forEach((btn) => {
     btn.addEventListener('click', () => downloadOvpn(btn.dataset.id));
   });
   document.querySelectorAll('[data-act="opt-pf"]').forEach((btn) => {
     btn.addEventListener('click', () => openPlatformModal(btn.dataset.id));
   });
-  document.querySelectorAll('[data-act="opt-lc"]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const s = state.servers.find((x) => x.id === btn.dataset.id);
-      if (s) openLcModal([lcTargetFromServer(s)]);
-    });
-  });
   const probeBtn = document.querySelector('[data-act="opt-probe"]');
-  if (probeBtn) probeBtn.addEventListener('click', () => localProbeAll(ranked, data, results));
+  if (probeBtn) probeBtn.addEventListener('click', runOptimize);
 }
 
 /** 对单个 IP 做浏览器直连 TCP 探测（https 探测：TLS 失败但 TCP 建立 = 端口有服务） */
@@ -513,7 +546,7 @@ async function probeLocalIp(ip, ports, timeoutMs) {
       // 说明端口有服务在响应（OpenVPN 收到 TLS 请求后断开、证书错误等）→ 视为可达。
       // 旧逻辑把「快速失败=端口拒绝」误判为不可达，会误杀真实可达节点（VPNGate 443 常见快速断开）。
       if (e.name === 'AbortError' || e.name === 'TimeoutError') continue; // 超时，试下一端口
-      return { reachable: true, rttMs: dt, why: 'resp' };
+      return { reachable: true, rttMs: dt, port, why: 'resp' };
     }
   }
   return { reachable: false, rttMs: null, why: 'timeout' };
@@ -530,140 +563,6 @@ async function probeLocalServer(s, fallbackPorts, timeoutMs) {
   if (proto === 'udp') return { reachable: null, udp: true, port, why: 'udp' };
   const r = await probeLocalIp(s.ip, [port, ...fallbackPorts.filter((p) => p !== port)], timeoutMs);
   return { ...r, port: r.port || port };
-}
-
-/**
- * 本机实测：用总节点（按评分取前 maxNodes）在浏览器直连筛一遍，
- * 标出本机可达/不可达/UDP 未测；对 TCP 可达集合重新评分排序，
- * 并附带展示评分前 N 个 UDP 候选（需试连）。
- * 防全不可达：TCP 实测 0 可达时自动回退到 CF 边缘结果并警示。
- */
-/** CF 边缘 OpenVPN 服务探测（分批 ≤25/请求，防 CF 子请求限制）。
- *  浏览器无法发 OpenVPN 首包，由 CF 边缘代发 HARD_RESET 帧确认服务在线。
- *  @returns {Promise<Object<string, {online: boolean, rttMs: number|null}>>} */
-async function probeOvpnService(ids) {
-  const out = {};
-  const cfg = state.config.ovpnProbe || {};
-  if (cfg.enabled === false || !ids.length) return out;
-  const batch = 25;
-  try {
-    for (let i = 0; i < ids.length; i += batch) {
-      const part = ids.slice(i, i + batch);
-      const res = await api('/api/probe-ovpn', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: part }),
-      });
-      if (res && res.results) Object.assign(out, res.results);
-    }
-  } catch (e) { console.warn('ovpn 服务探测失败', e); }
-  return out;
-}
-
-async function localProbeAll(ranked, data, prevResults) {
-  const lp = state.config.localProbe || {};
-  if (lp.enabled === false) { toast('本机实测未启用（可在 配置 → 本机实测 打开）', 'err'); return; }
-  const maxNodes = Math.max(5, Math.min(500, lp.maxNodes || 120));
-  // 用总节点按评分粗排取前 N：不依赖 CF 边缘筛出的候选，防止边缘全可达但本机全不可达
-  const pool = [...state.servers]
-    .filter((s) => s.ip)
-    .sort((a, b) => (b.score || 0) - (a.score || 0) || (a.pingMs || 1e9) - (b.pingMs || 1e9))
-    .slice(0, maxNodes);
-  const ports = (lp.ports || [443]).slice(0, 2);
-  const timeoutMs = lp.timeoutMs || 3000;
-
-  const body = document.getElementById('optBody');
-  body.innerHTML = `<div class="section-title">🔍 本机实测中（共 ${pool.length} 个节点，按实际端口直连，UDP 标注未测）…</div>
-    <div class="probe-bar"><div class="probe-bar-inner" id="probeBarInner" style="width:0%"></div></div>
-    <div class="empty" id="probeStatus">已测 0 / ${pool.length}，本机可达 0…</div>`;
-
-  const results = new Map();
-  const CONC = 8;
-  let idx = 0, done = 0, ok = 0, udpCount = 0;
-  const barInner = document.getElementById('probeBarInner');
-  const statusEl = document.getElementById('probeStatus');
-  const tick = () => {
-    barInner.style.width = Math.round((done / pool.length) * 100) + '%';
-    statusEl.textContent = `已测 ${done} / ${pool.length}，本机可达 ${ok}，UDP 未测 ${udpCount}，超时 ${done - ok - udpCount}…`;
-  };
-  const workers = [];
-  for (let w = 0; w < CONC; w++) {
-    workers.push((async () => {
-      while (idx < pool.length) {
-        const s = pool[idx++];
-        const r = await probeLocalServer(s, ports, timeoutMs);
-        results.set(s.id, r);
-        done++; if (r.reachable) ok++; else if (r.udp) udpCount++;
-        if (done % 5 === 0 || done === pool.length) tick();
-      }
-    })());
-  }
-  await Promise.all(workers);
-  tick();
-
-  // TCP 实测可达集合（UDP 浏览器无法验证，另作候选展示）
-  const reachableIds = [];
-  const udpCandidates = [];
-  results.forEach((v, id) => {
-    if (v.reachable) reachableIds.push(id);
-    if (v.udp) {
-      const s = state.servers.find((x) => x.id === id);
-      if (s) udpCandidates.push(s);
-    }
-  });
-  // CF 边缘 OpenVPN 服务真实探测（仅对可达集合，确认 443 上 OpenVPN 服务在线，
-  // 筛掉"端口通但没开 OpenVPN"的节点——本机✓ 却连不上的主因）；结果写入 results 供卡片展示
-  if (reachableIds.length > 0) {
-    body.innerHTML = '<div class="empty">正在用 CF 边缘确认 ' + reachableIds.length + ' 个可达节点的 OpenVPN 服务状态…</div>';
-    try {
-      const svc = await probeOvpnService(reachableIds);
-      for (const [id, v] of Object.entries(svc)) {
-        const cur = results.get(id);
-        if (cur && typeof v.online === 'boolean') cur.service = v.online;
-      }
-    } catch (e) { console.warn('服务探测异常', e); }
-  }
-  // 只要 ≥1 个本机可达就采用本机结果（用户只需 1~2 个能连的节点）；
-  // 仅 0 可达时回退 CF 边缘结果并警示（防全不可达：永远有结果可看）
-  if (reachableIds.length === 0) {
-    // 防全不可达：回退到 CF 边缘结果，标注实测状态并警示
-    renderOptCards(ranked, data, results);
-    body.insertAdjacentHTML('afterbegin', `<div class="empty" style="color:var(--err,#e5484d);margin-bottom:8px">
-      ⚠️ 本机实测 ${pool.length} 个节点 TCP 全部超时（UDP ${udpCount} 个未测），已回退展示 CF 边缘探测结果；
-      带「本机✗」的节点可能连不上。可切换网络（WiFi↔流量）、放宽筛选、增大实测节点上限或稍后再试。</div>`);
-    toast('本机实测 TCP 全部不可达，已回退边缘结果', 'err');
-    return;
-  }
-  // 对可达集合重新评分（服务端按权重排序，跳过边缘探测）
-  body.innerHTML = '<div class="empty">正在对 ' + reachableIds.length + ' 个本机可达节点按权重重新评分…</div>';
-  try {
-    const d2 = await api('/api/optimize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: reachableIds }),
-    });
-    let list = d2.ranked || [];
-    // 附带展示评分前 N 个 UDP 候选（浏览器无法探测 UDP，需试连）
-    const maxUdp = Math.max(0, Math.min(50, lp.maxUdpCandidates || 8));
-    if (maxUdp > 0 && udpCandidates.length > 0) {
-      const udpTop = udpCandidates
-        .sort((a, b) => (b.score || 0) - (a.score || 0))
-        .slice(0, maxUdp)
-        .map((s) => ({
-          id: s.id, hostname: s.hostname, ip: s.ip, countryShort: s.countryShort,
-          port: s.port, proto: s.proto, baseScore: 0, score: 0, reachable: false, rttMs: null,
-          udp: true,
-        }));
-      list = list.concat(udpTop);
-    }
-    renderOptCards(list, { ...data, mode: 'local', probed: d2.probed }, results);
-    body.insertAdjacentHTML('afterbegin', `<div class="section-title" style="color:var(--ok,#30a46c)">
-      ✅ 本机实测 ${pool.length} 个节点：TCP 可达 ${reachableIds.length} 个，已按权重重新评分
-      ${maxUdp > 0 && udpCandidates.length > 0 ? `；另附 ${Math.min(maxUdp, udpCandidates.length)} 个 UDP 候选（标「UDP 未测·试连」）` : ''}。</div>`);
-  } catch (e) {
-    renderOptCards(ranked, data, results);
-    body.insertAdjacentHTML('afterbegin', `<div class="empty" style="color:var(--err,#e5484d);margin-bottom:8px">重新评分失败（${esc(e.message)}），已保留实测标记。</div>`);
-  }
 }
 
 // ==================== 配置面板 ====================
@@ -975,7 +874,7 @@ function fullGuideSteps(ip) {
   const host = ip || '节点IP';
   const ovpnUrl = ip ? '' : '（从优选卡片/多端面板复制）';
   return [
-    `<b>一、两种连接方式怎么选</b><br/>本节点由 SoftEther 驱动，同时开放 <b>OpenVPN（TCP 443，需客户端）</b>与 <b>L2TP/IPsec（UDP，系统原生免客户端）</b>。账密统一 <b>vpn / vpn</b>，L2TP 预共享密钥 <b>vpn</b>。<br/>判断：卡片「本机✓」= 你的网络到节点 TCP 可达；「服务✓/✗」= CF 边缘确认该节点 443 是否启用 OpenVPN 服务——<b>服务✗ 时 OpenVPN 一定连不上，直接改用 L2TP</b>。`,
+    `<b>一、两种连接方式怎么选</b><br/>本节点由 SoftEther 驱动，同时开放 <b>OpenVPN（TCP 443，需客户端）</b>与 <b>L2TP/IPsec（UDP，系统原生免客户端）</b>。账密统一 <b>vpn / vpn</b>，L2TP 预共享密钥 <b>vpn</b>。<br/>判断：卡片「本机✓」= 你的浏览器本地实测到节点 TCP 可达（唯一连通性判据），优先选本机✓ 的节点；OpenVPN 连不上时直接改用 L2TP。`,
     `<b>二、OpenVPN · iOS（iPhone/iPad）</b><br/>① App Store 安装 <b>OpenVPN Connect</b>（官方免费）；<br/>② 本页「下载配置」保存 .ovpn（或复制链接在手机浏览器打开自动下载）；<br/>③ 打开 App →「Get connected」→ 切到 <b>Upload File</b> 标签 → 选择刚下载的 .ovpn 文件 → Import；<br/>④ 连接时账密输入 <b>vpn / vpn</b>（勾选 Import autologin profile 可免密）。<br/>⚠️ 不要在 URL 标签粘贴链接——那是「服务器地址/Cloud ID」入口，不支持 .ovpn 配置下载。`,
     `<b>三、OpenVPN · Android</b><br/>① Play 商店安装 <b>OpenVPN Connect</b>；<br/>② 本页「下载配置」保存 .ovpn（或复制链接在浏览器打开下载）；<br/>③ 方式 A：打开 App → Get connected → <b>Upload File</b> → 选 .ovpn → Import；方式 B：在「文件/下载」里点 .ovpn →「用 OpenVPN Connect 打开」→ 导入；<br/>④ 连接账密 <b>vpn / vpn</b>。`,
     `<b>四、OpenVPN · Windows（10/11）</b><br/>① 安装 <b>OpenVPN GUI</b>（openvpn.net 下载，装时选 OpenVPN Service 组件）或 OpenVPN Connect；<br/>② 本页「下载配置」保存 .ovpn → 右键 → <b>Open with OpenVPN GUI</b>（或 OpenVPN Connect 里 Upload File 导入）；<br/>③ 托盘图标 → Connect → 账密 <b>vpn / vpn</b>；<br/>④ 或用下方「复制 Windows OpenVPN 命令」一条命令下载并打开导入。`,
@@ -988,7 +887,7 @@ function fullGuideSteps(ip) {
     `<b>十一、L2TP · macOS</b>：系统设置 → 网络 → VPN → 添加 VPN 配置 → 类型 <b>L2TP over IPsec</b> → 服务器=${host}、账户=vpn、密码=vpn → 认证设置选「共享的密钥」填 <b>vpn</b> → 连接。`,
     `<b>十二、L2TP · Linux</b>：运行下方「复制 Linux L2TP 创建命令」自动安装 network-manager-l2tp 并创建连接。<br/>纯 CLI：<code>sudo apt install -y xl2tpd strongswan</code>，在 /etc/ipsec.conf 设密钥 <b>vpn</b>、/etc/xl2tpd/xl2tpd.conf 指向 ${host} 后拨号。`,
     `<b>十三、下载配置链接说明</b>：面板/卡片的「下载配置」与「复制链接」是 <b>带令牌的免登录链接</b>（.ovpn 结尾），默认有效期 10 分钟；可在任意设备/客户端直接下载导入，无需登录本系统。`,
-    `<b>十四、常见问题</b><br/>① 连不上 → 先看卡片「本机✗」（网络不可达，换节点/换网络）与「服务✗」（节点未开 OpenVPN，改用 L2TP）；<br/>② OpenVPN 导入失败 → 用 <b>Upload File</b> 选 .ovpn 文件，勿在 URL 标签粘贴；<br/>③ 反复要账密 → 账密是 <b>vpn / vpn</b>（不是登录本系统的密码）；<br/>④ Windows L2TP 报 789/691 → 确认注册表补丁已加、账密正确；<br/>⑤ iOS L2TP 报「IPsec 失败」→ 确认 PSK 填 <b>vpn</b>；<br/>⑥ 速度慢/不稳 → 选评分高、在线时间长（100+ 天）的节点；<br/>⑦ 部分节点 OpenVPN/L2TP 服务未启用 → 多试几个节点（配置参数格式一致）；<br/>⑧ 节点动态上下线 → 稍后重试或刷新列表。`,
+    `<b>十四、常见问题</b><br/>① 连不上 → 先看卡片「本机✗」（浏览器实测超时，换节点/换网络）或节点未启用 OpenVPN 服务（改用 L2TP）；<br/>② OpenVPN 导入失败 → 用 <b>Upload File</b> 选 .ovpn 文件，勿在 URL 标签粘贴；<br/>③ 反复要账密 → 账密是 <b>vpn / vpn</b>（不是登录本系统的密码）；<br/>④ Windows L2TP 报 789/691 → 确认注册表补丁已加、账密正确；<br/>⑤ iOS L2TP 报「IPsec 失败」→ 确认 PSK 填 <b>vpn</b>；<br/>⑥ 速度慢/不稳 → 选评分高、在线时间长（100+ 天）的节点；<br/>⑦ 部分节点 OpenVPN/L2TP 服务未启用 → 多试几个节点（配置参数格式一致）；<br/>⑧ 节点动态上下线 → 稍后重试或刷新列表。`,
   ];
 }
 
@@ -1037,274 +936,6 @@ async function openPlatformModal(id) {
     </div>
     ${pfPanelHtml('', url, label)}`;
   document.getElementById('pfMask').hidden = false;
-}
-
-// ==================== 本机连通性校验 ====================
-/**
- * 背景：CF 边缘探测只能证明“Cloudflare 网络可达”，用户本机 ISP 可能屏蔽该 IP。
- * 本机校验提供三种途径（按可靠性）：
- *  1. 本机探测命令（bash/python3 或 PowerShell，精确 TCP 连接，推荐）；
- *  2. 下载单文件探测页，本地 http 打开后用浏览器直测；
- *  3. 浏览器直连探测（仅当本页以 http:// 访问时有效，https 下被浏览器安全策略禁止）。
- * 结果存于 state.local.results，可过滤“仅本机可达”并在表格/优选卡片上标记。
- */
-
-/** 打开本机校验面板（targets: [{id, ip, hostname, countryShort, ports}]） */
-function openLcModal(targets) {
-  state.local.targets = targets;
-  renderLcBody();
-  document.getElementById('lcMask').hidden = false;
-}
-
-/** 由节点 id 构造单节点校验目标 */
-function lcTargetFromServer(s) {
-  return {
-    id: s.id,
-    ip: s.ip,
-    hostname: s.hostname,
-    countryShort: s.countryShort,
-    ports: (state.config.probe.ports || [443]).slice(0, 3),
-  };
-}
-
-/** 面板标题文案 */
-function lcHeadText() {
-  const n = state.local.targets.length;
-  const names = state.local.targets.slice(0, 3).map((t) => `${t.countryShort || ''} ${t.ip}`).join('、');
-  return `待校验 ${n} 个节点：${names}${n > 3 ? ` 等` : ''}`;
-}
-
-function renderLcBody() {
-  const body = document.getElementById('lcBody');
-  const isHttps = location.protocol === 'https:';
-  const hint = isHttps
-    ? `<div class="lc-hint">⚠ 当前页面为 <b>https</b> 访问，浏览器安全策略禁止页面直连 http 目标（混合内容），
-        “浏览器直连探测”不可用。请使用：<b>① 复制探测命令</b>在本机终端运行，或 <b>② 下载探测页</b>后用
-        本地 http 服务打开进行浏览器直测。将结果粘贴回下方输入框即可自动标记。</div>`
-    : `<div class="lc-hint">页面为 <b>http</b> 访问，可直接点击「浏览器直连探测」。注意：浏览器探测仅能确认端口
-        有服务响应，被墙（丢包）与端口未开放均显示失败；精确结果请以本机探测命令为准。</div>`;
-
-  body.innerHTML = `
-    ${hint}
-    <div class="section-title">${esc(lcHeadText())}</div>
-    <div class="lc-targets">
-      ${state.local.targets.map((t) => {
-        const r = state.local.results[t.id];
-        const chip = !r
-          ? '<span class="chip dim">未测</span>'
-          : r.reachable
-            ? `<span class="chip ok">可达 ${r.rttMs}ms</span>`
-            : `<span class="chip bad">不可达</span>`;
-        return `
-        <div class="lc-row" data-id="${esc(t.id)}">
-          <div class="t-ip">
-            <span class="flag">${flagEmoji(t.countryShort)}</span> ${esc(t.ip)}
-            <span class="t-host">${esc(t.hostname)}</span>
-            <span class="t-ports">端口 ${(t.ports || []).join('/')}</span>
-            ${chip}
-          </div>
-          <div class="lc-actions">
-            <button class="btn mini" data-lc="ok" data-id="${esc(t.id)}">标记可达</button>
-            <button class="btn mini" data-lc="bad" data-id="${esc(t.id)}">标记不可达</button>
-          </div>
-        </div>`;
-      }).join('')}
-    </div>
-    <div class="lc-paste">
-      <div class="section-title">粘贴本机探测输出并应用标记（支持 OK / FAIL / TIMEOUT / REFUSED 行）</div>
-      <textarea id="lcPaste" placeholder="例如：&#10;OK 1.2.3.4:443 12ms&#10;TIMEOUT 5.6.7.8:1194 3000ms&#10;REFUSED 9.9.9.9:5555"></textarea>
-      <div class="row-actions">
-        <button class="btn" data-lc="apply">应用标记</button>
-        <span class="cfg-hint" id="lcApplyResult"></span>
-      </div>
-    </div>`;
-}
-
-/** 浏览器直连探测（仅 http 页面生效） */
-async function runBrowserProbe() {
-  if (location.protocol === 'https:') {
-    toast('https 页面禁止浏览器直连，请用命令模式或下载探测页', 'err');
-    return;
-  }
-  const timeout = (state.config.probe.timeoutMs || 2500);
-  const results = await Promise.all(state.local.targets.map(async (t) => {
-    let ok = false, rtt = null, detail = '无响应';
-    for (const port of t.ports || []) {
-      const r = await wsProbe(t.ip, port, timeout);
-      if (r.ok) { ok = true; rtt = r.rtt; detail = r.detail; break; }
-      detail = r.detail;
-    }
-    setLcResult(t.id, ok, rtt, detail);
-    return { id: t.id, ok, rtt, detail };
-  }));
-  const okN = results.filter((r) => r.ok).length;
-  renderLcBody();
-  toast(`浏览器探测完成：${okN}/${results.length} 可达`, okN > 0 ? 'ok' : 'err');
-}
-
-/** 单端口 WebSocket 探测（尽力而为） */
-function wsProbe(ip, port, timeoutMs) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = (ok, rtt, detail) => {
-      if (settled) return;
-      settled = true;
-      resolve({ ok, rtt, detail });
-    };
-    let ws;
-    try {
-      ws = new WebSocket(`ws://${ip}:${port}/`);
-      const t0 = performance.now();
-      ws.onopen = () => {
-        try { ws.close(); } catch { /* 忽略 */ }
-        done(true, Math.round(performance.now() - t0), `端口 ${port} 响应`);
-      };
-      ws.onclose = () => {
-        try { ws.close(); } catch { /* 忽略 */ }
-        done(false, null, `端口 ${port} 无 HTTP 响应（被墙/未开放/非 Web 服务）`);
-      };
-      setTimeout(() => {
-        try { ws.close(); } catch { /* 忽略 */ }
-        done(false, null, `端口 ${port} 超时（疑似被网络屏蔽）`);
-      }, timeoutMs);
-    } catch {
-      done(false, null, '浏览器安全策略阻止');
-    }
-  });
-}
-
-/** 写入/清除本机校验结果 */
-function setLcResult(id, reachable, rttMs, detail) {
-  if (!id) return;
-  if (reachable === null || reachable === undefined) {
-    delete state.local.results[id];
-  } else {
-    state.local.results[id] = { reachable, rttMs: rttMs || null, detail: detail || '', ts: Date.now() };
-  }
-  renderTable();
-  renderLcBody();
-}
-
-/** 手动标记某节点 */
-function markLc(id, reachable) {
-  setLcResult(id, reachable, null, reachable ? '手动标记' : '手动标记');
-  toast(reachable ? '已标记为可达' : '已标记为不可达', reachable ? 'ok' : 'err');
-}
-
-/** 解析探测输出并应用标记 */
-function applyLcParsed(text) {
-  const lines = String(text || '').split(/\r?\n/);
-  const byNode = new Map(); // nodeId → {reachable, rttMs, detail}
-  for (const raw of lines) {
-    const m = raw.trim().match(/^(OK|FAIL|TIMEOUT|REFUSED)\s+([\d.]+):(\d+)(?:\s+(\d+)ms)?/i);
-    if (!m) continue;
-    const [, status, ip, port, rttRaw] = m;
-    const rtt = rttRaw ? Number.parseInt(rttRaw, 10) : null;
-    const target = state.local.targets.find((t) => t.ip === ip);
-    if (!target) continue;
-    const cur = byNode.get(target.id) || { reachable: false, rttMs: null, detail: '' };
-    if (status.toUpperCase() === 'OK') {
-      cur.reachable = true;
-      if (cur.rttMs == null || (rtt != null && rtt < cur.rttMs)) cur.rttMs = rtt;
-    } else {
-      cur.detail = (cur.detail ? cur.detail + '；' : '') + `${status} ${ip}:${port}`;
-    }
-    byNode.set(target.id, cur);
-  }
-  let applied = 0;
-  for (const [id, r] of byNode) {
-    setLcResult(id, r.reachable, r.reachable ? r.rttMs : null, r.detail || '本机命令探测');
-    applied++;
-  }
-  const el = document.getElementById('lcApplyResult');
-  if (el) el.textContent = applied > 0 ? `已应用 ${applied} 个节点` : '未解析到有效行（格式：OK/FAIL/TIMEOUT/REFUSED ip:port 12ms）';
-  return applied;
-}
-
-/** 生成本机探测命令（win: PowerShell；其他: python3） */
-function lcCmd() {
-  const flat = [];
-  for (const t of state.local.targets) {
-    for (const p of (t.ports || [])) flat.push(`${t.ip}:${p}`);
-  }
-  const list = JSON.stringify(flat);
-  if (/windows/i.test(navigator.userAgent)) {
-    return `$targets=@(${flat.map((x) => `'${x}'`).join(',')}); foreach($t in $targets){ $ip,$p=$t -split ':'; $sw=[System.Diagnostics.Stopwatch]::StartNew(); $ok=Test-NetConnection -ComputerName $ip -Port $p -InformationLevel Quiet -WarningAction SilentlyContinue; $sw.Stop(); if($ok){"OK $t $($sw.ElapsedMilliseconds)ms"}else{"TIMEOUT $t $($sw.ElapsedMilliseconds)ms"} }`;
-  }
-  return `python3 - <<'EOF'
-import socket,time
-targets=${list}
-for t in targets:
-    ip,p=t.split(':'); p=int(p); s=time.time()
-    try:
-        sck=socket.create_connection((ip,p),timeout=3); sck.close()
-        print(f"OK {t} {int((time.time()-s)*1000)}ms")
-    except socket.timeout:
-        print(f"TIMEOUT {t} {int((time.time()-s)*1000)}ms")
-    except OSError as e:
-        print(f"REFUSED {t}" if e.errno==111 else f"FAIL {t}")
-EOF`;
-}
-
-async function copyLcCmd() {
-  const cmd = lcCmd();
-  try {
-    await navigator.clipboard.writeText(cmd);
-    toast('探测命令已复制，请在本机终端运行', 'ok');
-  } catch {
-    toast('复制失败，请手动选择复制', 'err');
-  }
-}
-
-/** 下载单文件探测页（本机 http 打开后浏览器直测） */
-function downloadProbePage() {
-  const targets = state.local.targets.map((t) => ({
-    ip: t.ip, hostname: t.hostname, cc: t.countryShort, ports: (t.ports || []).slice(0, 3),
-  }));
-  const html = `<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><title>VPNGate 本机探测页</title>
-<style>
-body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#0f1115;color:#e6e9ef;padding:24px;max-width:760px;margin:0 auto}
-h1{font-size:18px} .hint{color:#8b93a5;font-size:13px;background:#171a21;border:1px solid #2a2f3a;border-radius:10px;padding:10px 12px}
-button{padding:8px 16px;border-radius:8px;border:1px solid #2a2f3a;background:#1e222c;color:#e6e9ef;cursor:pointer;font-size:13px}
-button:hover{border-color:#3b82f6} .btn-p{background:#3b82f6;color:#fff;border-color:#3b82f6}
-table{width:100%;border-collapse:collapse;margin-top:14px}
-th,td{padding:8px 10px;border-bottom:1px solid #2a2f3a;text-align:left;font-size:13px}
-th{color:#8b93a5} .mono{font-family:monospace} .ok{color:#22c55e;font-weight:600} .bad{color:#ef4444;font-weight:600}
-textarea{width:100%;min-height:90px;margin-top:12px;background:#171a21;color:#e6e9ef;border:1px solid #2a2f3a;border-radius:8px;padding:8px;font-family:monospace;font-size:12px}
-</style></head><body>
-<h1>VPNGate 本机连通性探测</h1>
-<div class="hint">请在<b>本地</b>打开本页面：在文件所在目录运行 <b>python3 -m http.server 8000</b>，然后浏览器访问
-<b>http://127.0.0.1:8000/vpngate-probe.html</b>（必须 http，不能用 file:// 或 https，否则浏览器会拦截探测）。
-点击「开始探测」后，把结果复制回主站「本机连通性校验」面板粘贴即可自动标记。</div>
-<div style="margin-top:12px"><button class="btn-p" id="run">开始探测</button>
-<button id="copy">复制结果</button></div>
-<table id="tb"><thead><tr><th>#</th><th>国家</th><th>IP</th><th>主机名</th><th>端口</th><th>结果</th><th>RTT</th></tr></thead><tbody></tbody></table>
-<textarea id="out" placeholder="探测结果输出区"></textarea>
-<script>
-var TARGETS=${JSON.stringify(targets)};
-var rows=[];
-function $(id){return document.getElementById(id)}
-function flag(cc){if(!cc||cc.length!==2)return '';return String.fromCodePoint.apply(null,[...cc.toUpperCase()].map(function(c){return 0x1f1e6+c.charCodeAt(0)-65}))}
-function wsProbe(ip,port,timeout){return new Promise(function(resolve){var settled=false;function done(ok,rtt,detail){if(settled)return;settled=true;resolve({ok:ok,rtt:rtt,detail:detail})}
-var ws;try{ws=new WebSocket('ws://'+ip+':'+port+'/');var t0=performance.now();ws.onopen=function(){try{ws.close()}catch(e){}done(true,Math.round(performance.now()-t0),'响应')}
-ws.onclose=function(){try{ws.close()}catch(e){}done(false,null,'无HTTP响应')}
-setTimeout(function(){try{ws.close()}catch(e){}done(false,null,'超时')},timeout)}catch(e){done(false,null,'安全策略')}})}
-$('run').addEventListener('click',function(){var tb=$('tb').getElementsByTagName('tbody')[0];tb.innerHTML='<tr><td colspan="7">探测中…（并行，请稍候）</td></tr>';
-Promise.all(TARGETS.map(function(t){return (async function(){var ok=false,rtt=null,detail='';for(var i=0;i<t.ports.length;i++){var r=await wsProbe(t.ip,t.ports[i],3000);if(r.ok){ok=true;rtt=r.rtt;detail=r.detail+' 端口'+t.ports[i];break}detail=r.detail+' 端口'+t.ports[i]}
-rows.push({ip:t.ip,cc:t.cc,host:t.hostname,ports:t.ports.join('/'),ok:ok,rtt:rtt,detail:detail});return rows[rows.length-1]})()}))
-.then(function(list){tb.innerHTML=list.map(function(r,i){return '<tr><td>'+(i+1)+'</td><td>'+flag(r.cc)+' '+r.cc+'</td><td class="mono">'+r.ip+'</td><td>'+r.host+'</td><td>'+r.ports+'</td><td class="'+(r.ok?'ok':'bad')+'">'+(r.ok?'可达':'不可达')+'</td><td>'+(r.rtt!=null?r.rtt+'ms':r.detail)+'</td></tr>'}).join('');
-$('out').value=list.map(function(r){return (r.ok?'OK':'FAIL')+' '+r.ip+':0'+(r.rtt!=null?' '+r.rtt+'ms':'')+' '+r.detail}).join('\\n')})});
-$('copy').addEventListener('click',function(){var lines=rows.map(function(r){return (r.ok?'OK':'FAIL')+' '+r.ip+':'+r.ports.split('/')[0]+(r.rtt!=null?' '+r.rtt+'ms':'')}).join('\\n');
-$('out').value=lines;navigator.clipboard.writeText(lines).then(function(){alert('已复制，请粘贴回主站')},function(){alert('请手动复制下方内容')})});
-</script></body></html>`;
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'vpngate-probe.html';
-  a.click();
-  URL.revokeObjectURL(a.href);
-  toast('探测页已下载：python3 -m http.server 8000 后 http 打开', 'ok');
 }
 
 // ==================== 操作日志 ====================
@@ -1381,10 +1012,6 @@ function bindEvents() {
     state.sort = e.target.value;
     renderTable();
   });
-  document.getElementById('reachableOnly').addEventListener('change', (e) => {
-    state.reachableOnly = e.target.checked;
-    renderTable();
-  });
   document.getElementById('lcOnly').addEventListener('change', (e) => {
     state.lcOnly = e.target.checked;
     renderTable();
@@ -1412,9 +1039,6 @@ function bindEvents() {
   document.getElementById('btnCloseCfg').addEventListener('click', () => {
     document.getElementById('cfgMask').hidden = true;
   });
-  document.getElementById('btnCloseLc').addEventListener('click', () => {
-    document.getElementById('lcMask').hidden = true;
-  });
   document.getElementById('btnClosePf').addEventListener('click', () => {
     document.getElementById('pfMask').hidden = true;
   });
@@ -1437,19 +1061,6 @@ function bindEvents() {
     if (cp) copyText(cp.dataset.pfCopy, '已复制，可在本机终端运行');
   });
 
-  // 本机校验面板操作
-  document.getElementById('btnLcProbe').addEventListener('click', runBrowserProbe);
-  document.getElementById('btnLcCopyCmd').addEventListener('click', copyLcCmd);
-  document.getElementById('btnLcDownload').addEventListener('click', downloadProbePage);
-  document.getElementById('lcBody').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-lc]');
-    if (!btn) return;
-    const { lc, id } = btn.dataset;
-    if (lc === 'ok') markLc(id, true);
-    if (lc === 'bad') markLc(id, false);
-    if (lc === 'apply') applyLcParsed(document.getElementById('lcPaste').value);
-  });
-
   // 抽屉内操作（事件委托）
   document.getElementById('drawerBody').addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-act]');
@@ -1458,10 +1069,6 @@ function bindEvents() {
     if (act === 'probe') probeServerById(id);
     if (act === 'ovpn') downloadOvpn(id);
     if (act === 'node') showNodeParams(id);
-    if (act === 'lc') {
-      const s = state.servers.find((x) => x.id === id);
-      if (s) openLcModal([lcTargetFromServer(s)]);
-    }
     if (act === 'pf') openPlatformModal(id);
     if (act === 'l2tp-copy') copyText(btn.dataset.text, 'L2TP 参数已复制');
   });

@@ -13,14 +13,14 @@ description: VPNGate 优选工具（Cloudflare Pages）的开发、部署、验�
 ```
 public/              静态单页（index.html/app.js/style.css/login.html）
 functions/
-  api/[[path]].js    API 路由（config/servers/optimize/ovpn/node/probe/logs/auth/health/healthz）
+  api/[[path]].js    API 路由（config/servers/optimize/ovpn/node/logs/auth/health/healthz）
   _middleware.js     全站鉴权（放行 /login.html、/login、/api/auth/*、/api/healthz）
-  _lib/              config(存储双模式) sources(数据源) optimize(评分优选) probe(TCP探测)
+  _lib/              config(存储双模式) sources(数据源) optimize(纯静态评分排序)
                      ovpn(base64→.ovpn) auth(HMAC签名会话+登录防爆破) log(操作日志) util
 scripts/
   package.mjs        生成部署包 dist/（public 平铺 + functions + _headers，不含 wrangler.toml）
   check-syntax.mjs   全量语法检查
-  check-unit.mjs     单元测试（node:test，18 项）
+  check-unit.mjs     单元测试（node:test）
   e2e-test.mjs       端到端全量验证 <baseUrl> <password>
   deploy-test.sh     测试环境手动部署（wrangler 直传）
   upload-pages.py    旧直传脚本（已被 wrangler 替代，保留参考）
@@ -61,16 +61,15 @@ CF_PROJECT=vpngate-test CF_DOMAIN=vpngate-test.zhangsen.kdns.fr \
 ## 验证
 
 ```bash
-node scripts/check-syntax.mjs && node scripts/check-unit.mjs   # 18 项单测
-node scripts/e2e-test.mjs <baseUrl> <password>                 # 46 项端到端（认证+全接口+用户流程）
+node scripts/check-syntax.mjs && node scripts/check-unit.mjs   # 全量单测
+node scripts/e2e-test.mjs <baseUrl> <password>                 # 端到端（认证+全接口+用户流程）
 ```
-e2e 通过 = 用户使用级测试 + 全部接口测试（登录/登出/配置读写/存储切换/同步/日志/servers/refresh/optimize/ovpn/node/probe/health/healthz/404/越界收敛）。
+e2e 通过 = 用户使用级测试 + 全部接口测试（登录/登出/配置读写/存储切换/同步/日志/servers/refresh/optimize/ovpn/node/health/healthz/404/越界收敛/已移除探测接口返回 404）。
 
 ## 关键排障知识（踩坑记录）
 
 - **Pages 直传 API 是两步流程**：先 POST `/pages/assets/upload`（JWT 认证）传文件，再 POST `/deployments` 带 manifest+`_worker.bundle`。旧的「manifest+文件一次性 multipart」会被静默接受但文件不挂载（部署记录 file_hash_list 为空、页面全 404）——直接用 wrangler 部署即可规避。
-- **cloudflare:sockets 新版 API**：`connect({hostname,port})` 返回 Socket，用 `socket.opened`（Promise）/`socket.closed`（Promise）判断连通；旧式 `addEventListener('opened')` 会报 `socket.addEventListener is not a function`，导致所有节点探测全 false。
-- **优选探测挂死（重点）**：cloudflare:sockets 走边缘 egress proxy，**并发 connect 会被限流挂起**，且不可达 IP 时 `socket.opened` reject——`.then()` 未挂 catch 会产生 unhandled rejection 使 isolate 报 `internal call error`；即使挂 catch，多节点并发也常超过平台 30s 墙钟。**对策**：opened/closed 全部挂 catch；`runOptimize` 用**整体预算**（默认 15s，`Promise.race([全部探测, 预算timer])`，超时未完成节点标记不可达返回部分结果）；前端优选请求 AbortController 25s 兜底；默认 `probeCount=10`。probeCount 越大越慢（egress 限流），用户可在配置面板改。探测到标准 HTTP 服务端口（如 1.1.1.1:443）会被 egress 拒绝（`proxy request failed...consider using fetch`），属正常——VPNGate 节点的 443/1194 是 OpenVPN/L2TP 非 HTTP，可正常探测。
+- **已移除 CF 边缘探测（当前架构）**：服务端不再引入 `cloudflare:sockets`，已删除 `probe.js` / `ovpn-probe.js` 与 `/api/probe`、`/api/probe-ovpn`；`optimize.js` 只剩纯函数 `rankServers`（筛选 + 评分 + 排序，可选 `ids` 过滤）。「优选超时：边缘探测节点较慢」报错不会再出现——优选全部由浏览器本地直连完成，进度与超时在前端可控。历史踩坑（egress 限流挂起、opened/closed 未挂 catch 导致 `internal call error`、30s 墙钟、整体预算 15s、AbortController 25s 兜底）均已不适用。配置组 `probe` / `ovpnProbe` 已从 DEFAULTS、SCHEMA 与校验中删除，`validateConfig` 会清理旧 KV 配置残留。
 - **CSS `[hidden]` 陷阱**：`.modal-mask{display:flex}` 会覆盖 HTML `hidden` 属性（作者样式优先级高于 UA 的 `[hidden]{display:none}`），导致**页面加载即所有弹窗全显示**（用户"进去啥也看不到"）。必须加全局 `[hidden]{display:none!important}`。
 - **前端事件绑定引用未定义函数会中断整个 bindEvents**：如 `btnLogs` 绑定 `openLogs` 但函数缺失 → 后续所有交互（搜索/筛选/退出/保存）全部失效。前端改动后必须用浏览器实际点击验证（API e2e 覆盖不到 UI）。
 - **官方源（www.vpngate.net）国内不可达的真相是 DNS 污染**：`getent hosts www.vpngate.net` 返回 Facebook IPv6（`2a03:2880:...:face:b00c:...`）——解析被劫持到错误 IP。DoH 查真实 IP（华为 1.12.12.12 可达，返回 130.158.75.44/48），真实 IP 直连也被封锁。**正确姿势**：让 CF 边缘（Pages Functions）直连域名——CF 自带干净 DNS，再配合：① 浏览器 UA（官方源对非浏览器 UA 可能拒绝）② 失败重试（官方瞬时 504/超时自动重试）③ fetch.dnsResolver='google' 可经 Google DoH 解析真实 IP（注：https 源受 TLS SNI 限制，IP 直连会证书不匹配，此选项实际依赖 CF 干净 DNS，保留为配置项）。修复后官方源在测试+生产均实测 ✅ 97 节点。
@@ -83,7 +82,7 @@ e2e 通过 = 用户使用级测试 + 全部接口测试（登录/登出/配置�
 - **项目 pages.dev 子域不一定是 `<project>.pages.dev`**（被占用时会生成如 `vpngate-b44.pages.dev`）；CNAME 目标必须以项目实际 subdomain 为准，否则域名卡 pending。
 - **Pages 项目 kv_namespaces 是对象结构**：`{"VPNGATE_CFG":{"namespace_id":"..."}}`，不是数组；env_vars 同样对象结构。
 - **VPNGate 官方源可能 504**（外部故障）：镜像源（97 节点）自动兜底，页面数据源状态会显示失败，属正常降级。
-- **大多免费节点真实不可达**（97 个里只有 2~3 个在线）；`requireReachable=true`（默认）时 ranked 可能为空是正确行为，配合「本机校验」使用（CF 可达 ≠ 本机可达）。
+- **大多免费节点真实不可达**（97 个里只有若干在线）；浏览器实测 0 个 TCP 可达时会展示静态评分结果 + 红色警示，属正常行为，可切换网络或增大 `localProbe.maxNodes` 后重试。
 - **wrangler.toml 不要提交占位 KV id**：部署时会按它同步项目绑定导致生产绑定被清/报 `KV namespace '0000...' not found`。
 - **GitHub Secrets 需公钥加密**：用 `gh secret set`（或 PyNaCl），不能直接 PUT 明文。
 - **pages-action 已不可用**（`Unable to resolve action cloudflare/pages-action`）：改用 `npx wrangler@4 pages deploy` 直传。
@@ -98,4 +97,4 @@ e2e 通过 = 用户使用级测试 + 全部接口测试（登录/登出/配置�
 - **"服务器响应不正确"第三层根因（本会话最深一坑）——OpenVPN 选项被强制转大写 + 非跨平台选项**：真机 openvpn 2.5.11 实测 `.ovpn` 报 `Options error: DATA-CIPHERS (2.5.11)`。排查链：① 线上输出含 `DATA-CIPHERS` 但 raw（数据源配置）不含 → 用「输出标记行」证实线上代码是最新（部署链路无问题）→ 用「无条件输出 raw 诊断（has/head/tail）」证实 raw 无残留 → ② 最终定位：**`ovpn.appendOptions` 在 validateConfig 时被 `strArrayOf` 强制 `toUpperCase`**（该函数本为国家代码设计，appendOptions 误复用）→ 任何保存/加载都转成大写 → OpenVPN 解析失败。**修复**：新增 `strArrayKeep`（保留大小写）用于 appendOptions；buildOvpn 输出前对完整文本（含附加选项）再兜底清理大写残留（双保险）。③ 同时发现 **block-outside-dns 在 Linux/macOS 上 OpenVPN 2.5+ 也报 Options error**（Windows 专用）、**追加 data-ciphers 会覆盖原始配置导致 cipher 协商失败** → 默认 appendOptions 仅保留 `auth-nocache`。**经验**：诊断"线上代码到底跑没跑"用「输出标记行」；定位"数据从哪来"用「无条件输出诊断信息」；OpenVPN 配置必须过 `openvpn --config` 实测（Options error 只有真客户端能暴露）。
 - **openvpn CLI 实测方法**（沙箱）：`sudo apt-get -o Acquire::http::Proxy=$PROXY install -y openvpn`（环境变量 NO_PROXY 会绕过 apt 代理，必须 env -u NO_PROXY + -o 指定）；`printf "vpn\nvpn\n" > auth.txt; timeout 25 sudo openvpn --config x.ovpn --auth-user-pass auth.txt --connect-retry 1 --connect-retry-max 1 --connect-timeout 10 --verb 3`，**无 Options error 且出现 "Attempting to establish TCP connection" = 配置有效**（VPNGate 服务器 TCP 443/1194 可达性取决于网络）。
 
-- **"优选出来的 IP 连接不上"解法——本机实测优先 + 防全不可达回退**：CF 边缘探测只代表边缘可达，用户本机（尤其国内）可能全不可达。实现：① 前端**在页面内**（不另开窗口）用 `fetch('https://ip:port/', {mode:'no-cors'})` 直连总节点（按评分取前 `localProbe.maxNodes`，默认 120，配置可调），判定规则：resolve=可达；AbortError/TimeoutError=超时不可达；快速失败（< fastFailMs 默认 1200ms）=连接被拒不可达；**慢失败（TCP 建立但 TLS 不匹配）= 可达**（关键：VPNGate 443 是 OpenVPN TLS 服务，https fetch 会建 TCP 后因证书失败，慢失败正好证明端口有服务）；② 实测完成后把可达 id 集合 POST /api/optimize `{ids}`，服务端 runOptimize 的 ids 模式只对集合按静态权重评分排序（跳过边缘探测）；③ **防全不可达**：可达数 < max(3, topN) 时自动回退渲染 CF 边缘结果 + 红色警示（带本机✗ 的节点可能连不上）。注意：浏览器对跨源 fetch 有并发限制，用 8 并发 worker 循环；HTTPS 页面只能 fetch https://ip（http 会被混合内容拦截）；Chrome 对公网 IP:非标准端口无 PNA 限制可直连。
+- **唯一探测途径 = 浏览器页面内直连**：点「立即优选」即 `runOptimize` 一站式流程——① 从 `state.servers` 按评分取前 `localProbe.maxNodes`（默认 120）；② `fetch('https://ip:port/', {mode:'no-cors'})` 直连节点实际 TCP 端口，判定：resolve 或非超时失败（TCP 已建立，证书/协议不匹配）= 可达；仅 AbortError/TimeoutError = 超时不可达；UDP 节点标「未测·试连」；③ 可达 id 集合 POST `/api/optimize {ids}`，服务端 `rankServers` 按权重重新评分排序；④ 0 可达或关闭实测时展示静态评分 Top N 并提示。结果写入 `state.local.results`，表格「本机」列与「仅本机可达」过滤共用。注意：浏览器对跨源 fetch 有并发限制，用 8 并发 worker 循环；HTTPS 页面只能 fetch `https://ip`（http 会被混合内容拦截）；Chrome 对公网 IP:非标准端口无 PNA 限制可直连。
