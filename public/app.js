@@ -455,7 +455,8 @@ async function runOptimize() {
         .slice(0, maxUdp)
         .map((s) => ({
           id: s.id, hostname: s.hostname, ip: s.ip, countryShort: s.countryShort,
-          port: s.port, proto: s.proto, baseScore: 0, score: 0, udp: true,
+          port: s.port, proto: s.proto, speedBps: s.speedBps, uptimeHours: s.uptimeHours,
+          baseScore: 0, score: 0, udp: true,
         })));
     }
     renderOptCards(list, { mode: 'local' });
@@ -495,7 +496,7 @@ function renderOptCards(ranked, data) {
         <div class="opt-main">
           <div class="row1"><span class="flag">${flagEmoji(r.countryShort)}</span><span class="ip">${esc(r.ip)}</span>
             <span class="badge ok">${esc(r.hostname)}</span>${chipOf(r.id)}</div>
-          <div class="row2">端口 ${portShow} · ${(r.proto || '').toUpperCase() || '-'} · 在线 ${fmtUptime(r.uptimeHours)} · 基础分 ${(r.baseScore || 0).toFixed(3)} → ${(r.score || 0).toFixed(3)}</div>
+          <div class="row2">速度 <b>${fmtSpeed(r.speedBps)}</b> · 端口 ${portShow} · ${(r.proto || '').toUpperCase() || '-'} · 在线 ${fmtUptime(r.uptimeHours)} · 基础分 ${(r.baseScore || 0).toFixed(3)} → ${(r.score || 0).toFixed(3)}</div>
         </div>
         <div class="opt-meta">
           <div class="rtt">${rttShow}</div>
